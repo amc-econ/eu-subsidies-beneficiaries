@@ -1,0 +1,27 @@
+cff-version: 1.2.0
+message: "If you use this tool in your research, please cite it."
+title: "EU Subsidies Beneficiary Analysis"
+version: 1.0.0
+date-released: "2026-03-17"
+authors:
+  - family-names: "Bjerkan-Wade"
+    given-names: "Benjamin"
+    affiliation: "Bruegel"
+  - family-names: "Collin"
+    given-names: "Antoine Mathieu"
+    affiliation: "Bruegel"
+repository-code: "https://github.com/amc-econ/eu-subsidies-beneficiaries"
+abstract: >
+  A reproducible pipeline for matching company lists against ~27 million
+  harmonized EU subsidy records from 12 public sources. Covers state aid
+  (TAM), direct grants and contracts (FTS), cohesion policy (Kohesio),
+  EIB and EBRD loans, structural funds (ESIF), CINEA, the Recovery and
+  Resilience Facility (RRF), and Horizon research programmes (CORDIS).
+keywords:
+  - EU subsidies
+  - state aid
+  - entity matching
+  - public finance
+  - open data
+  - European Union
+license: MIT

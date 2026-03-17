@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "eu-subsidies-beneficiaries"
+version = "1.0.0"
+description = "Match any company list against 27 million EU subsidy records from 12 public sources."
+authors = [
+    {name = "Benjamin Bjerkan-Wade"},
+    {name = "Antoine Mathieu Collin"},
+]
+license = {text = "MIT"}
+keywords = ["EU subsidies", "state aid", "entity matching", "public finance", "open data"]
+requires-python = ">=3.10"
+dependencies = [
+    "pandas>=2.0",
+    "numpy>=1.24",
+    "openpyxl>=3.1",
+    "pyarrow>=14.0",
+    "rapidfuzz>=3.0",
+    "requests>=2.31",
+    "urllib3>=2.0",
+]
+
+[project.optional-dependencies]
+viz = [
+    "matplotlib>=3.7",
+    "seaborn>=0.12",
+    "plotly>=5.15",
+    "kaleido>=0.2",
+]
+
+[project.urls]
+Homepage = "https://github.com/amc-econ/eu-subsidies-beneficiaries"
+Documentation = "https://github.com/amc-econ/eu-subsidies-beneficiaries/tree/main/research"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src*", "examples*"]

@@ -1,0 +1,32 @@
+company,ipcei,country,role,amount_eur_est,amount_confidence
+BMW,Batteries 1,DE,OEM,60000000,estimated
+BASF,Batteries 1,DE,Materials,175000000,estimated
+Umicore,Batteries 1,BE,Materials/Recycling,80000000,estimated
+Solvay,Batteries 1,BE,Materials,,unknown
+VARTA,Batteries 1,DE,Battery cells,300000000,estimated
+ACC,Batteries 1,FR,Battery cells,500000000,estimated
+SEEL (Verkor),Batteries 1,FR,Battery cells,,unknown
+ACC,Batteries 2 (EuBatIn),FR,Battery cells,437000000,confirmed
+Northvolt,Batteries 2 (EuBatIn),SE,Battery cells,155000000,estimated
+BMW,Batteries 2 (EuBatIn),DE,OEM,50000000,estimated
+BASF,Batteries 2 (EuBatIn),DE,Materials,175000000,estimated
+Umicore,Batteries 2 (EuBatIn),DE,Materials/Recycling,,unknown
+VARTA,Batteries 2 (EuBatIn),DE,Battery cells,200000000,estimated
+ElringKlinger,Batteries 2 (EuBatIn),DE,Auto supplier,,unknown
+FPT Industrial (CNH/Iveco),Batteries 2 (EuBatIn),IT,OEM/powertrain,,unknown
+InoBat Energy,Batteries 2 (EuBatIn),SK,Battery cells,,unknown
+Skeleton Technologies,Batteries 2 (EuBatIn),DE,Energy storage,,unknown
+PowerCo SE (VW),Batteries 2 (EuBatIn),DE,Battery cells (associated),,unknown
+STMicroelectronics,Microelectronics 2 (ME-CT),FR,Semiconductors,2900000000,estimated
+Infineon,Microelectronics 2 (ME-CT),DE,Semiconductors,1000000000,estimated
+NXP,Microelectronics 2 (ME-CT),NL,Semiconductors,,unknown
+Bosch,Microelectronics 2 (ME-CT),DE,Semiconductors,,unknown
+Renault,Microelectronics 2 (ME-CT),FR,OEM,,unknown
+Daimler Truck,Hy2Tech,DE,OEM (trucks),,unknown
+Bosch,Hy2Tech,DE,Fuel cell components,,unknown
+Symbio (Faurecia/Michelin),Hy2Tech,FR,Fuel cells,670000000,confirmed
+OPmobility (Plastic Omnium),Hy2Tech,FR,H2 storage tanks,,unknown
+Iveco/Fincantieri,Hy2Tech,IT,OEM (trucks),,unknown
+BMW,Hy2Move,DE,OEM,,unknown
+Michelin,Hy2Move,FR,Tires/fuel cells,,unknown
+Skeleton Technologies,Hy2Move,EE,Energy storage,,unknown
