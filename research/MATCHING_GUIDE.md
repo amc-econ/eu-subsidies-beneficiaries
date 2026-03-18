@@ -231,7 +231,7 @@ df_cofin  = df[df['dc_flag'].str.contains('cofinancing_overlap', na=False)]
 | `consortium_partner_attribution` | FTS-CORDIS row attributed to a consortium member, not the direct beneficiary |
 | `same_record_multicountry` | Same source record (same ID + entity + amount + year) appears under multiple country codes — structural artifact of multi-country KOHESIO projects; all but the first occurrence are flagged |
 
-**What is not deduplicated**: EIB/EBRD loans alongside grants from TAM or other sources are kept as `dc_preferred=True` — loans are repayable and GGE conversion already applies lower rates (15–10% vs 100% for grants). Including both is correct.
+EIB/EBRD loans alongside grants from TAM or other sources are kept as `dc_preferred=True` — loans are repayable and GGE conversion already applies lower rates (15–10% vs 100% for grants). @Antoine I think this merits some thinking. IMy impression is that TAM grant/loan figures are reprensetative of the state aid component only, even though it could be for projects that are also recieving loans from IFIs.
 
 **False positive controls**: pass via
 `MatchConfig(false_positive_pairs=..., beneficiary_fp_patterns=...)`. See
