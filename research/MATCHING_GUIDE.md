@@ -239,7 +239,7 @@ EIB/EBRD loans alongside grants from TAM or other sources are kept as `dc_prefer
 
 ---
 
-🚨🚨🚨🚨 **COMMENT:** The thresholds set currently to catch duplicates are based off the relatively small sample size of CRMA rows you had shared me. I want to spend some time tmrw doing manual validation of the final output csv and seeing if anything else looks funny. The chart by source looks to be, not obviously, impacted by duplicates though.
+🚨🚨🚨🚨 **COMMENT:** The thresholds set currently to catch duplicates are based off the relatively small sample size of CRMA rows you had shared me. I want to spend some time tmrw doing manual validation of the final output csv and seeing if anything else looks funny. The charts by source don't show any obvious signs of double counting at least. 
 
 ---
 
