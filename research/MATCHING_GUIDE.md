@@ -145,11 +145,22 @@ The consolidation step produces:
 | `group_summary.csv` | Group-level summary (if parent_groups configured) |
 | `concentration_metrics.json` | HHI, Top5%, Gini at entity and group level |
 | `T1-T8 summary tables` | By source, country, instrument, year, fiscal source, top entities |
-| `charts/` | 8 publication-grade Plotly charts |
+| `charts/` | 6 publication-grade matplotlib charts |
 
 ### Cross-Source Deduplication
 
-The consolidation phase flags overlapping records and sets `dc_preferred` accordingly. Charts and summary tables use `dc_preferred = True` rows only.
+Several EU databases capture the same underlying financial flow from different angles. The consolidation phase detects these overlaps, marks the lower-authority row `dc_preferred=False`, and sets `dc_flag` to record which pattern was detected. No rows are deleted. Charts and summary tables use `dc_preferred = True` rows only.
+
+**Detection criteria**:
+
+| Source pair | What overlaps | Detection | Tolerance |
+|-------------|--------------|-----------|-----------|
+| FTS ↔ INNOVFUND | FTS records budget outflow; INNOVFUND records the award decision. Same grant, two rows. | FTS `programme` contains `'Innovation Fund'`; same entity; amount comparison | ≤ 0.1% amount ratio. Year window not used — award and payment years routinely differ. |
+| FTS ↔ CINEA | FTS records payment; CINEA programme DB records the same project. | FTS `programme` contains CINEA keyword (CEF, LIFE, EMFAF); shared `source_record_id` | Exact project ID match. No amount check — partial payments and tranches mean amounts differ. |
+| TAM ↔ KOHESIO | TAM = total national state aid (EU share + national share). KOHESIO = EU co-financing share only. Same investment, two angles. | Same entity + country; year ±2; plausibility ratio check | KOHESIO/TAM ratio 1–150%. Lower bound excludes coincidental matches; upper bound covers multi-year KOHESIO disbursements against a single TAM commitment. |
+| TAM ↔ RRF | RRF recovery grants sometimes notified as state aid in TAM. | Same logic as TAM ↔ KOHESIO | Same ratio 1–150% |
+| IPCEI ↔ TAM | IPCEI project aid receives an SA.XXXXX reference and appears in both the IPCEI reference database and TAM. | Same entity + country; year ±2; amount proximity | ≤ 20% amount ratio. IPCEI estimated amounts at EC approval may differ from notified SA amounts. |
+| Consortium partner | FTS-CORDIS bridge attributes consortium grant to matched entity, but the entity is one of multiple consortium members — not the sole beneficiary. | `match_type = fts_cordis_cordis_company` | No amount check. Classification by match type, not proximity. |
 
 **Columns added to `consolidated_matches.csv`**:
 
@@ -168,6 +179,9 @@ df_clean  = df[df['dc_preferred'] == True]                          # headline t
 df_direct = df[(df['dc_preferred'] == True) &
                (df['attribution_type'] == 'direct')]                # direct beneficiaries only
 df_dupes  = df[df['dc_preferred'] == False]                         # inspect what was flagged
+
+# Filter by specific overlap type
+df_cofin  = df[df['dc_flag'].str.contains('cofinancing_overlap', na=False)]
 ```
 
 **`dc_flag` values**:
@@ -180,6 +194,8 @@ df_dupes  = df[df['dc_preferred'] == False]                         # inspect wh
 | `cofinancing_overlap:tam_rrf` | TAM row overlaps with an RRF recovery grant |
 | `confirmed_duplicate:ipcei_tam` | IPCEI state aid decision also notified as SA.XXXXX in TAM |
 | `consortium_partner_attribution` | FTS-CORDIS row attributed to a consortium member, not the direct beneficiary |
+
+**What is not deduplicated**: EIB/EBRD loans alongside grants from TAM or other sources are kept as `dc_preferred=True` — loans are repayable and GGE conversion already applies lower rates (15–10% vs 100% for grants). Including both is correct.
 
 **False positive controls**: pass via
 `MatchConfig(false_positive_pairs=..., beneficiary_fp_patterns=...)`. See

@@ -55,7 +55,7 @@ The pipeline automatically runs in sequence:
 1. **Fuzzy matching** — exact + fuzzy match against 27M rows (rapidfuzz, two-layer)
 2. **Post-match enrichment** — CORDIS research grants, EU ETS allocation, IPCEI, FTS text mining
 3. **Consolidation** — GGE calculation, deduplication, summary tables, concentration metrics
-4. **Charts** — 8 publication-grade charts (top entities, by country, by source, by instrument, time series)
+4. **Charts** — 6 publication-grade charts (annual totals, by MFF period, by country, top groups by GGE, top groups by source, non-EU groups)
 
 ---
 
@@ -71,14 +71,12 @@ match_output/
 ├── T1–T8_summary_*.csv            # Breakdowns by source, country, instrument, year
 ├── concentration_metrics.json     # HHI, Gini, top-5% share
 └── charts/
-    ├── C01_top_entities.*         # Top 20 companies by GGE
-    ├── C02_by_country.*
-    ├── C03_by_source.*
-    ├── C04_by_instrument.*
-    ├── C05_by_mff_period.*
-    ├── C06_time_series.*
-    ├── C07_face_vs_gge.*
-    └── C08_match_quality.*
+    ├── 01_annual_total.png              # Annual support totals (line + fill)
+    ├── P02_mff_source_stacked.png       # Support by MFF period × data source
+    ├── P05_country_instrument.png       # Top 15 granting countries by instrument
+    ├── P06c_top20_gge_core_auto.png     # Top 20 groups: face value vs GGE (dual bars)
+    ├── P15c_top20_aggregated_core.png   # Top 20 groups by total face value × source
+    └── S04_foreign_top15.png            # Top 15 non-EU groups by GGE (skipped if no hq_country)
 ```
 
 **GGE (Gross Grant Equivalent)** converts face values to subsidy-equivalent: grants = 100%, loans = 15%, guarantees = 10%.
@@ -198,7 +196,7 @@ data/processed/                  [3] MASTER BUILD
                                         v
                                  [6] CONSOLIDATION + CHARTS (automatic)
                                     GGE, dedup, group rollup, summary tables,
-                                    8 publication charts
+                                    6 publication charts
 ```
 
 </details>
