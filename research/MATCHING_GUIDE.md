@@ -115,10 +115,44 @@ The matcher produces in the output directory:
 | Column | Description |
 |--------|------------|
 | `{prefix}_reference_name` | Matched company from reference list |
-| `{prefix}_type` | `exact`, `fuzzy_high`, `fuzzy_medium`, `contextual_exact`, `title_extraction` |
-| `{prefix}_confidence` | `high`, `medium`, `lower` |
-| `{prefix}_score` | rapidfuzz score (0-100), null for exact matches |
+| `{prefix}_type` | See match type table below |
+| `{prefix}_score` | rapidfuzz score (0–100); 100 for exact matches, null for enrichment-sourced rows |
 | All original master columns | Preserved from master_dataset |
+
+### Match Types
+
+The `match_type` column records which mechanism produced the match. There are three groups: Layer A (name matching), Layer B (text scanning), and enrichment (post-match sources added after the main matching pass).
+
+**Layer A: name matching**
+
+The matcher collects all unique `entity_name_clean` values from the master dataset (~8 million), scores them once against the reference list, then joins results back to the full 27M rows. This avoids rescoring the same name repeatedly.
+
+| `match_type` | Score | Description |
+|---|---|---|
+| `exact` | 100 | Normalised beneficiary name matches a reference name or alias exactly. |
+| `fuzzy_high` | 85-99 | `rapidfuzz.fuzz.token_set_ratio`. This scorer sorts and compares token sets, so word-order differences and inserted legal suffixes (SA, GmbH, plc) do not reduce the score. |
+| `fuzzy_medium` | 75-84 | Same scorer at a lower threshold. More likely to need spot-checking on material amounts. If the company list includes a `country` column, any fuzzy_medium match where the reference country conflicts with the row's country is vetoed before reaching the output. |
+
+Before fuzzy scoring, candidates are pre-filtered: a beneficiary name must share at least one significant token with the reference name to be scored at all. Tokens that are too common to be informative (the, of, ltd, gmbh, sa, group, etc.) are excluded from this index. Names of 5 characters or fewer require an exact match.
+
+**Layer B: text scanning**
+
+Runs only on rows that Layer A did not match. A single compiled regex built from all reference names (minimum 6 characters) is applied to free-text fields.
+
+| `match_type` | Description |
+|---|---|
+| `contextual_exact` | Reference name found in the row's `description` field. The beneficiary name itself did not match. The entity is named in project context rather than as the recorded recipient. `attribution_type = contextual`. |
+| `eib_title_extraction` | For EIB and EBRD rows, `beneficiary_name` contains the project title rather than a company name. The regex scans the title to extract a company reference. `attribution_type = inferred`. |
+
+**Enrichment**
+
+Rows added by the post-match enrichment scripts, not by the entity matcher. Each carries its own `match_type` to distinguish it from Layer A/B results.
+
+| `match_type` | Description |
+|---|---|
+| `fts_cordis_beneficiary_name` | FTS-CORDIS bridge. FTS grant IDs are extracted from FTS payment descriptions and joined to CORDIS participant records. This value means the FTS beneficiary name itself matched the reference company: direct receipt. |
+| `fts_cordis_cordis_company` | FTS-CORDIS bridge. The reference company appears in the CORDIS consortium member list for this grant, but is not the entity that received the FTS payment (often a university or coordinating body). Always `dc_preferred=False`, `attribution_type=consortium_partner`. |
+| `ipcei_reference` | Matched against the curated IPCEI participant list (batteries, hydrogen, microelectronics IPCEI programmes). Amounts are notified state aid figures from EC approval decisions. |
 
 ## Full Pipeline (match + enrich + consolidate)
 
