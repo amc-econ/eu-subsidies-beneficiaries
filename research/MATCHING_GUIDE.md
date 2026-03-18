@@ -231,7 +231,11 @@ df_cofin  = df[df['dc_flag'].str.contains('cofinancing_overlap', na=False)]
 | `consortium_partner_attribution` | FTS-CORDIS row attributed to a consortium member, not the direct beneficiary |
 | `same_record_multicountry` | Same source record (same ID + entity + amount + year) appears under multiple country codes — structural artifact of multi-country KOHESIO projects; all but the first occurrence are flagged |
 
-EIB/EBRD loans alongside grants from TAM or other sources are kept as `dc_preferred=True` — loans are repayable and GGE conversion already applies lower rates (15–10% vs 100% for grants). @Antoine I think this merits some thinking. IMy impression is that TAM grant/loan figures are reprensetative of the state aid component only, even though it could be for projects that are also recieving loans from IFIs.
+EIB/EBRD loans alongside grants from TAM or other sources are kept as `dc_preferred=True` — loans are repayable and GGE conversion already applies lower rates (15–10% vs 100% for grants). 
+
+<p><strong style="color:red;">COMMENT:</strong> @Antoine I think this merits some thinking. My impression is that if a LOAN appears in TAM, it is possible that it was co-financed by an IFI. So, I can add some logic like: If a loan from TAM and EIB have the same beneficiary in +2 yrs with similar disburstments, we flag it, as is done for other data sources currently. </p>
+
+<p><strong style="color🍏;">COMMENT:</strong> The thresholds set currently to catch duplicates are based off the relatively small sample size of CRMA rows you had shared me. I want to spend some time tmrw doing manual validation of the final output csv and seeing if anything else looks funny. The chart by source looks to be, not obviously, impacted by duplicates though.</p>
 
 **False positive controls**: pass via
 `MatchConfig(false_positive_pairs=..., beneficiary_fp_patterns=...)`. See
