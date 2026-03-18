@@ -45,7 +45,7 @@ python run_pipeline.py --stage match \
 ```python
 from src.matching.generic_matcher import run_matching, MatchConfig
 
-match_log, summary = run_matching(
+enriched_df, match_log_df = run_matching(
     master_csv=Path('data/processed/master_dataset.csv'),
     company_list_csv=Path('my_companies.csv'),
     aliases_json=Path('my_aliases.json'),          # optional

@@ -35,6 +35,8 @@ This analysis draws on 12 publicly available EU data sources, comprising approxi
 
 ### 1.2 Reference Lists
 
+The matcher accepts any company list CSV. The following are used in the automotive worked example (`examples/automotive/`) and are not required inputs for other sectors:
+
 - **ORBIS Top 1000**: Bureau van Dijk's top 1,000 automotive companies by revenue (sheet "Results", column "Company name Latin alphabet").
 - **EV Volumes**: ~329 cleaned company names active in electric vehicle manufacturing or supply.
 
