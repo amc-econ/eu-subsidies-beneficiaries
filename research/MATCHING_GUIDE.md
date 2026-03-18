@@ -233,9 +233,15 @@ df_cofin  = df[df['dc_flag'].str.contains('cofinancing_overlap', na=False)]
 
 EIB/EBRD loans alongside grants from TAM or other sources are kept as `dc_preferred=True` — loans are repayable and GGE conversion already applies lower rates (15–10% vs 100% for grants). 
 
-<p><strong style="color:red;">COMMENT:</strong> @Antoine I think this merits some thinking. My impression is that if a LOAN appears in TAM, it is possible that it was co-financed by an IFI. So, I can add some logic like: If a loan from TAM and EIB have the same beneficiary in +2 yrs with similar disburstments, we flag it, as is done for other data sources currently. </p>
+---
 
-<p><strong style="color🍏;">COMMENT:</strong> The thresholds set currently to catch duplicates are based off the relatively small sample size of CRMA rows you had shared me. I want to spend some time tmrw doing manual validation of the final output csv and seeing if anything else looks funny. The chart by source looks to be, not obviously, impacted by duplicates though.</p>
+🚨🚨🚨🚨 **COMMENT:** @Antoine I think this merits some thinking. My impression is that if a LOAN appears in TAM, it is possible that it was co-financed by an IFI. So, I can add some logic like: If a loan from TAM and EIB have the same beneficiary in +2 yrs with similar disburstments, we flag it, as is done for other data sources currently.
+
+---
+
+🚨🚨🚨🚨 **COMMENT:** The thresholds set currently to catch duplicates are based off the relatively small sample size of CRMA rows you had shared me. I want to spend some time tmrw doing manual validation of the final output csv and seeing if anything else looks funny. The chart by source looks to be, not obviously, impacted by duplicates though.
+
+---
 
 **False positive controls**: pass via
 `MatchConfig(false_positive_pairs=..., beneficiary_fp_patterns=...)`. See
