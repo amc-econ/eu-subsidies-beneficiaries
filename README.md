@@ -21,7 +21,7 @@ Results land in `data/processed/match_output/`. Expect ~30 minutes on a standard
 
 ## Your Company List
 
-Create a CSV with a `company_name` column — that's all that's required:
+Create a CSV with a `company_name` column:
 
 ```csv
 company_name
@@ -55,7 +55,7 @@ The pipeline automatically runs in sequence:
 1. **Fuzzy matching** — exact + fuzzy match against 27M rows (rapidfuzz, two-layer)
 2. **Post-match enrichment** — CORDIS research grants, EU ETS allocation, IPCEI, FTS text mining
 3. **Consolidation** — GGE calculation, deduplication, summary tables, concentration metrics
-4. **Charts** — 6 publication-grade charts (annual totals, by MFF period, by country, top groups by GGE, top groups by source, non-EU groups)
+4. **Output** — A CSV containing all disburstments captured to your companies, along with 6 sample charts (annual totals, by MFF period, by country, top groups by GGE, top groups by source, non-EU groups)
 
 ---
 
@@ -71,12 +71,12 @@ match_output/
 ├── T1–T8_summary_*.csv            # Breakdowns by source, country, instrument, year
 ├── concentration_metrics.json     # HHI, Gini, top-5% share
 └── charts/
-    ├── 01_annual_total.png              # Annual support totals (line + fill)
+    ├── 01_annual_total.png              # Annual support totals
     ├── P02_mff_source_stacked.png       # Support by MFF period × data source
     ├── P05_country_instrument.png       # Top 15 granting countries by instrument
-    ├── P06c_top20_gge_core_auto.png     # Top 20 groups: face value vs GGE (dual bars)
+    ├── P06c_top20_gge_core_auto.png     # Top 20 groups: face value vs GGE
     ├── P15c_top20_aggregated_core.png   # Top 20 groups by total face value × source
-    └── S04_foreign_top15.png            # Top 15 non-EU groups by GGE (skipped if no hq_country)
+    └── S04_foreign_top15.png            # Top 15 non-EU groups by GGE 
 ```
 
 **GGE (Gross Grant Equivalent)** converts face values to subsidy-equivalent: grants = 100%, loans = 15%, guarantees = 10%.
@@ -142,7 +142,7 @@ A full worked example for a sector analysis is included, using a pre-built list 
 python run_pipeline.py --stage automotive
 ```
 
-This runs the full pipeline and generates 20 sector-specific presentation charts. See [`examples/automotive/`](examples/automotive/) for the config files.
+This runs the full pipeline and generates 20 sector-specific charts. See [`examples/automotive/`](examples/automotive/) for the config files.
 
 ---
 
