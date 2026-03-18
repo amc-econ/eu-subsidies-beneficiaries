@@ -15,7 +15,7 @@ python run_pipeline.py --stage match --company-list my_companies.csv
 
 > The master dataset (~1.7 GB) is downloaded automatically on first run. To download in advance without running a match: `python run_pipeline.py --download-data`
 
-Results land in `data/processed/match_output/`. Expect ~5–15 minutes on a standard laptop.
+Results land in `data/processed/match_output/`. Expect ~30 minutes on a standard laptop.
 
 ---
 
