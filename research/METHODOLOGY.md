@@ -35,7 +35,7 @@ This analysis draws on 12 publicly available EU data sources, comprising approxi
 
 ### 1.2 Reference Lists
 
-The matcher accepts any company list CSV. The following are used in the automotive worked example (`examples/automotive/`) and are not required inputs for other sectors:
+The following are used in the automotive worked example (`examples/automotive/`):
 
 - **ORBIS Top 1000**: Bureau van Dijk's top 1,000 automotive companies by revenue (sheet "Results", column "Company name Latin alphabet").
 - **EV Volumes**: ~329 cleaned company names active in electric vehicle manufacturing or supply.
@@ -50,22 +50,34 @@ All 12 sources are standardized to a canonical 36-column schema (Schema v2) via 
 
 Each raw beneficiary name undergoes the following normalization pipeline:
 
-1. **Legal suffix stripping**: Trailing corporate designators (GmbH, S.A., Ltd., SRL, AB, etc.) are removed. Leading tokens are preserved to avoid false conflation (e.g., "AB Volvo" retains "AB" since it is a leading token, not a trailing legal suffix).
+1. **Legal suffix stripping**: Trailing corporate designators (GmbH, S.A., Ltd., SRL, AB, etc.) are removed. Leading tokens are preserved to avoid false conflation (e.g., "AB Volvo" retains "AB" since it is a leading token, not a trailing legal suffix). The suffix list covers all principal forms across EU member state legal systems, including Portuguese (*Unipessoal Lda*), Polish (*Sp. z o.o.*, abbreviated *Zoo*), Spanish (*Unipersonal*), and Italian (*Società Unipersonale*) in addition to Germanic, Romance, and Nordic forms. Tokens classified as legal suffixes are also added to the trivial-token blocklist to prevent legal form fragments from driving fuzzy-match scores.
 2. **Whitespace normalization**: Consecutive whitespace collapsed; leading/trailing whitespace trimmed.
 3. **Case normalization**: All names lowercased for matching purposes; original casing preserved in a separate column.
 4. **Parenthetical content**: Stripped before fuzzy matching to reduce noise from subsidiary descriptors.
 
 ### 2.2 Entity Resolution
 
-Deterministic entity IDs are generated from the tuple (`entity_name_clean`, `country_code`). This ensures that the same legal entity appearing in multiple sources receives a consistent identifier prior to matching against reference lists.
+Deterministic entity IDs are generated from the tuple (`entity_name_clean`, `country_code`), enabling consistent cross-source identification.
 
 ### 2.3 Currency Conversion
 
 Records denominated in non-EUR currencies are converted using ECB reference exchange rates (`ecb_fx_rates.py`). The applicable rate is selected based on the award or commitment date.
 
-### 2.4 Overlap Detection
+### 2.4 Cross-Source Deduplication
 
-Several EU data sources report overlapping instruments. In particular, Structural Funds expenditure may appear in both TAM (as notified state aid) and Kohesio (as cohesion policy). Potential overlaps are flagged at the row level using source-pair heuristics (matching beneficiary, country, approximate amount, and time window). Overlap flags are advisory; no automatic deduplication is performed.
+Several EU databases capture the same underlying financial flow from different angles. The consolidation phase (Phase 2b in `consolidation.py`) applies structural deduplication across five confirmed overlap patterns:
+
+| Source pair | Overlap type | Resolution |
+|-------------|-------------|------------|
+| FTS + INNOVFUND | FTS records the budget outflow; INNOVFUND records the award decision. Same grant, two rows. | FTS row marked `dc_preferred=False`; INNOVFUND row is authoritative. Match criterion: same entity, amount within 0.1%. |
+| FTS + CINEA | FTS records payment; CINEA programme DB records the same project. | FTS row marked `dc_preferred=False` when project IDs match exactly. |
+| TAM + KOHESIO | TAM = total notified state aid (EU share + national share). KOHESIO = EU co-financing share only. Same investment, different angles. | TAM row marked `dc_preferred=False` when a KOHESIO record exists for the same entity and country within ±2 years and the KOHESIO amount is 1–150% of the TAM amount. |
+| TAM + RRF | Recovery grants sometimes notified as state aid in TAM. | Same logic as TAM + KOHESIO. |
+| IPCEI_state_aid + TAM | IPCEI project aid receives an SA.XXXXX reference and appears in both the IPCEI reference database and TAM. | TAM row marked `dc_preferred=False` when amounts match within 20% and years are within ±2. IPCEI row is authoritative. |
+
+FTS-CORDIS enrichment rows where `match_type = fts_cordis_cordis_company` represent consortium partner allocations attributed to the matched entity, not money the entity directly received. These are assigned `attribution_type = consortium_partner` and `dc_preferred = False`.
+
+No rows are removed. All data is preserved in `consolidated_matches.csv`. The `dc_preferred` column (`True`/`False`) marks which rows to include in headline EUR totals and charts. The `dc_flag` column records which overlap pattern was detected (pipe-delimited when multiple apply). Charts and summary tables default to `dc_preferred = True` rows.
 
 ### 2.5 Flag-Based Exclusion
 
@@ -126,7 +138,7 @@ Rather than matching all ~27 million rows individually, the pipeline extracts ~9
 
 ### 5.3 Layer B: Contextual Matching
 
-**Description regex.** For rows unmatched by Layer A, the pipeline applies compiled regex patterns against project description and metadata fields. This captures cases where the beneficiary name is absent or generic but the project description references a known automotive company.
+**Description regex.** For rows unmatched by Layer A, the pipeline applies compiled regex patterns against project description and metadata fields. This captures cases where the beneficiary name is absent or generic but the project description contains a company from the reference list.
 
 A `match_quality` flag distinguishes contextual matches from name-based matches, as description-field matching carries higher false positive risk (e.g., "Samsung tablet" matching Samsung SDI, "Michelin star" matching Michelin).
 
@@ -152,7 +164,7 @@ Each match is assigned a confidence tier:
 
 ## 6. Group Consolidation
 
-Matched entities are rolled up to corporate group level using a curated parent-groups dictionary. Legal suffixes are stripped before lookup; overlapping group names (e.g., "Volvo" vs. "Volvo Car" vs. "AB Volvo") are resolved by longest-match-first. In the automotive example, major groups include Stellantis (28 matched entities), VW Group (33), Mercedes-Benz (8), and Renault (8).
+Matched entities are rolled up to corporate group level using a curated parent-groups dictionary. Legal suffixes are stripped before lookup; overlapping group names (e.g., "Volvo" vs. "Volvo Car" vs. "AB Volvo") are resolved by longest-match-first.
 
 ---
 
@@ -178,9 +190,9 @@ GGE values represent the estimated subsidy content of each instrument and are re
 
 Per-source row counts and EUR totals are verified at each pipeline stage. Any discrepancy between harmonized source files and the assembled master dataset halts the pipeline.
 
-### 8.2 Overlap Risk Flagging
+### 8.2 Cross-Source Deduplication and Overlap Flagging
 
-Rows identified as potential cross-source duplicates are flagged but not removed. The overlap candidate count is reported in all summary statistics to bound the maximum overcount risk.
+Confirmed cross-source overlaps are resolved during consolidation (Phase 2b) using the `dc_preferred` and `dc_flag` columns described in Section 2.4. Rows with `dc_preferred = False` are excluded from headline totals and charts but retained in the dataset for research use. Summary statistics report the EUR volume at `dc_preferred = False` to bound any residual overlap risk from cases falling outside the matching criteria.
 
 ### 8.3 Structural Audit
 
@@ -188,24 +200,30 @@ A post-matching structural audit generates a 7-section diagnostic covering sourc
 
 ### 8.4 Structural Overlaps Resolved by Default
 
-The following overlaps are resolved at master dataset construction time:
+The following overlaps are resolved automatically. Master dataset exclusions apply at construction time; consolidation-phase deduplication applies at post-match time via `dc_preferred`.
 
-| Overlap | Resolution |
-|---------|-----------|
-| `SCOREBOARD` | Excluded — aggregated form of the same state aid data captured in TAM |
-| `ESIF` programme-level | Excluded — overlaps with Kohesio project-level records; Kohesio is preferred |
-| FTS rows flagged `research_programme_overlap` | Excluded when RESEARCH source is active |
-| Non-EU EIB/EBRD rows | Excluded by default |
+| Overlap | Stage | Resolution |
+|---------|-------|-----------|
+| `SCOREBOARD` | Master build | Excluded — aggregated form of the same state aid data captured in TAM |
+| `ESIF` programme-level | Master build | Excluded — overlaps with Kohesio project-level records; Kohesio is preferred |
+| FTS rows flagged `research_programme_overlap` | Master build | Excluded when RESEARCH source is active |
+| Non-EU EIB/EBRD rows | Master build | Excluded by default |
+| FTS rows with Innovation Fund programme | Consolidation | `dc_preferred=False` when matching INNOVFUND row exists (amount within 0.1%) |
+| FTS rows with CEF / LIFE / EMFAF programme | Consolidation | `dc_preferred=False` when matching CINEA row shares project ID |
+| TAM rows where KOHESIO covers same entity + country | Consolidation | `dc_preferred=False`; KOHESIO amount 1–150% of TAM, year within ±2 |
+| TAM rows matching IPCEI state aid decision | Consolidation | `dc_preferred=False`; amount within 20%, year within ±2 |
+| FTS-CORDIS consortium partner rows | Consolidation | `dc_preferred=False`; `attribution_type=consortium_partner` |
 
-All exclusions are recorded in `exclude_reason` and visible in the master dataset.
+Master build exclusions are recorded in `exclude_reason` and visible in the master dataset. Consolidation deduplication is recorded in `dc_flag` and visible in `consolidated_matches.csv`.
 
 ### 8.5 Residual Overlap Risks
 
-The following overlaps are **not automatically resolved**:
+The following cases are intentionally not deduplicated:
 
-- **RRF vs. TAM**: RRF records are planning-level allocations, not payment records. They are not deduplicated against TAM by design. If future TAM entries cover the same instruments, overlap is possible.
-- **Multi-source aggregation is not double-counting**: A beneficiary appearing in both Kohesio (cohesion grant) and EIB (loan) received two distinct instruments. Including both is correct. GGE conversion normalises cross-instrument comparison.
-- **Face value vs. GGE**: Face values should be treated as upper bounds on total support. Use GGE for cross-instrument and cross-source comparisons.
+- **EIB / EBRD loans alongside grants**: A beneficiary appearing in both EIB (loan) and TAM (grant) received two distinct financial instruments. These are not the same money — loans are repayable; GGE conversion already applies lower rates (15% for loans, 10% for guarantees vs 100% for grants). Including both is correct.
+- **TAM / KOHESIO outside matching criteria**: TAM rows are only flagged if a KOHESIO counterpart meets the plausibility ratio (KOHESIO = 1–150% of TAM) within a ±2 year window. Pairs outside these bounds — including cases where a TAM entry has an astronomically corrupt EUR value from a failed currency conversion — are not flagged.
+- **RRF vs. TAM (structural)**: RRF records in this dataset are at the national measure level with no beneficiary names. Once entity-level RRF data becomes available, overlap logic applies automatically (the `_flag_cofinancing_overlaps` function already handles RRF as a second pass after KOHESIO).
+- **Face value vs. GGE**: Face values are upper bounds on total support. Use GGE for cross-instrument comparisons.
 
 ---
 
@@ -219,7 +237,7 @@ The following overlaps are **not automatically resolved**:
 
 4. **Overlap resolution.** Cross-source overlaps (notably TAM-Kohesio for Structural Funds, and potential TAM-ESIF overlaps) are flagged but not automatically deduplicated. Summary statistics report overlap candidate counts to bound the risk, but true double-counting rates are unknown without manual case-by-case review.
 
-5. **Temporal snapshots.** Company reference lists (ORBIS, EV Volumes) reflect a single point in time. Corporate restructuring, M&A activity, and name changes occurring after list extraction may cause missed matches for historical records.
+5. **Temporal snapshots.** Company reference lists reflect a single point in time. Corporate restructuring, M&A activity, and name changes occurring after list extraction may cause missed matches for historical records.
 
 6. **TAM supplement completeness.** National supplements (Spain, Poland, Romania, Slovenia) improve coverage for those Member States but equivalent granular data is not available for all 27 EU members. Cross-country comparisons should account for this asymmetry.
 

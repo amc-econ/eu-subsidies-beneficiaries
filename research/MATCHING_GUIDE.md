@@ -1,6 +1,6 @@
 # Entity Matching Guide
 
-The generic matcher (`src/matching/generic_matcher.py`) accepts any company list and matches it against the master subsidy dataset. No sector-specific logic is hardcoded — all customisation is passed via configuration.
+The generic matcher (`src/matching/generic_matcher.py`) accepts any company list and matches it against the master subsidy dataset.
 
 ## Company List Format
 
@@ -135,19 +135,55 @@ Five enrichment scripts run automatically after matching:
 | FTS deep mining | Text-mines FTS descriptions for company name mentions |
 | High-value forensics | Audits top unmatched rows (>EUR 500K) for potential missed matches |
 
-All enrichment scripts accept the company list dynamically — no sector-specific patterns are hardcoded.
-
 ### Consolidation
 
 The consolidation step produces:
 
 | Output | Description |
 |--------|------------|
-| `consolidated_matches.csv` | All matches (core + enrichment) with GGE, match quality, optional parent group |
+| `consolidated_matches.csv` | All matches with GGE, match quality, cross-source deduplication flags, and attribution classification. Filter on `dc_preferred=True` for headline totals. |
 | `group_summary.csv` | Group-level summary (if parent_groups configured) |
 | `concentration_metrics.json` | HHI, Top5%, Gini at entity and group level |
 | `T1-T8 summary tables` | By source, country, instrument, year, fiscal source, top entities |
 | `charts/` | 8 publication-grade Plotly charts |
+
+### Cross-Source Deduplication
+
+The consolidation phase flags overlapping records and sets `dc_preferred` accordingly. Charts and summary tables use `dc_preferred = True` rows only.
+
+**Columns added to `consolidated_matches.csv`**:
+
+| Column | Values | Description |
+|--------|--------|-------------|
+| `dc_preferred` | `True` / `False` | `True` = include in headline EUR totals and charts |
+| `dc_flag` | pipe-delimited strings or empty | Which overlap pattern was detected |
+| `attribution_type` | `direct` / `consortium_partner` / `contextual` / `inferred` | How the amount is linked to the matched entity |
+| `programme` | string | FTS programme name; semantic link to INNOVFUND / CINEA |
+| `cofinancing_partner_id` | source_record_id or empty | Cross-reference to the preferred counterpart row |
+
+**Filtering**:
+
+```python
+df_clean  = df[df['dc_preferred'] == True]                          # headline totals
+df_direct = df[(df['dc_preferred'] == True) &
+               (df['attribution_type'] == 'direct')]                # direct beneficiaries only
+df_dupes  = df[df['dc_preferred'] == False]                         # inspect what was flagged
+```
+
+**`dc_flag` values**:
+
+| Flag | Meaning |
+|------|---------|
+| `confirmed_duplicate:fts_innovfund` | FTS budget outflow echoes an INNOVFUND award (same grant, two DBs) |
+| `confirmed_duplicate:fts_cinea` | FTS payment echoes a CINEA project record (shared project ID) |
+| `cofinancing_overlap:tam_kohesio` | TAM = total national aid; KOHESIO = EU co-financing share of the same investment |
+| `cofinancing_overlap:tam_rrf` | TAM row overlaps with an RRF recovery grant |
+| `confirmed_duplicate:ipcei_tam` | IPCEI state aid decision also notified as SA.XXXXX in TAM |
+| `consortium_partner_attribution` | FTS-CORDIS row attributed to a consortium member, not the direct beneficiary |
+
+**False positive controls**: pass via
+`MatchConfig(false_positive_pairs=..., beneficiary_fp_patterns=...)`. See
+`examples/automotive/config.py` for the pattern.
 
 ### GGE (Gross Grant Equivalent)
 

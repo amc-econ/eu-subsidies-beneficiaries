@@ -150,9 +150,9 @@ This runs the full pipeline and generates 20 sector-specific presentation charts
 
 ## Rebuilding from Raw Data
 
-> **Note:** Running `python run_pipeline.py` with no arguments triggers this full rebuild and requires the original raw source files in `data/raw/`. Most users should use `--stage match` instead.
+> **Note:** Requires the original raw source files in `data/raw/`. Most users should use `--stage match` instead.
 
-Most users don't need this — the pre-built master dataset is sufficient. If you have the original source files:
+If you have the original source files:
 
 ```bash
 python run_pipeline.py --stage harmonize   # raw → standardized CSVs
