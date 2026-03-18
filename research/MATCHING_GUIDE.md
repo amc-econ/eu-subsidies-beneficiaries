@@ -180,7 +180,7 @@ The consolidation step produces:
 | `group_summary.csv` | Group-level summary (if parent_groups configured) |
 | `concentration_metrics.json` | HHI, Top5%, Gini at entity and group level |
 | `T1-T8 summary tables` | By source, country, instrument, year, fiscal source, top entities |
-| `charts/` | 6 publication-grade matplotlib charts |
+| `charts/` | 6 matplotlib charts |
 
 ### Cross-Source Deduplication
 
