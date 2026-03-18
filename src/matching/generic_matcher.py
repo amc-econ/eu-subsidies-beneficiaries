@@ -63,11 +63,12 @@ def _resolve_master(master_csv: Path) -> Path:
 def _read_chunks(path: Path, columns=None, chunksize=250_000, dtype=None):
     """Read a CSV or Parquet file in chunks. Yields DataFrames."""
     if path.suffix == '.parquet':
-        # Parquet: read all at once (columnar format is already efficient)
-        # then yield in chunks for memory consistency
-        df = pd.read_parquet(path, columns=columns)
-        for start in range(0, len(df), chunksize):
-            yield df.iloc[start:start + chunksize]
+        # Stream parquet row-groups via pyarrow — never loads the full file into RAM.
+        # Peak memory ≈ chunksize rows × n_columns, not the full file.
+        import pyarrow.parquet as pq
+        pf = pq.ParquetFile(path)
+        for batch in pf.iter_batches(batch_size=chunksize, columns=columns):
+            yield batch.to_pandas()
     else:
         # CSV: chunked read
         kwargs = {'chunksize': chunksize, 'low_memory': True}

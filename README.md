@@ -10,16 +10,10 @@ Match any list of companies against ~27 million EU subsidy records from 12 publi
 git clone https://github.com/amc-econ/eu-subsidies-beneficiaries.git
 cd eu-subsidies-beneficiaries
 pip install -r requirements.txt
-git lfs pull          # downloads the pre-built master dataset (~1.6 GB)
-```
-
-> **Git LFS required.** Install from [git-lfs.github.com](https://git-lfs.github.com/) before cloning. If `data/processed/master_dataset.parquet` is smaller than 1 KB, run `git lfs pull`.
-
-Then run the included sample:
-
-```bash
 python run_pipeline.py --stage match --company-list my_companies.csv
 ```
+
+> The master dataset (~1.7 GB) is downloaded automatically on first run. To download in advance without running a match: `python run_pipeline.py --download-data`
 
 Results land in `data/processed/match_output/`. Expect ~5–15 minutes on a standard laptop.
 

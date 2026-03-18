@@ -47,6 +47,42 @@ GGE_RATES = {
 REPAYABLE_ADVANCE_RATE = 0.90
 
 
+# ============================================================================
+# NATIONALITY / ORIGIN BLOCK HELPERS
+# ============================================================================
+
+EU_COUNTRIES = frozenset({
+    'AT', 'BE', 'BG', 'CY', 'CZ', 'DE', 'DK', 'EE', 'ES', 'FI',
+    'FR', 'GR', 'HR', 'HU', 'IE', 'IT', 'LT', 'LU', 'LV', 'MT',
+    'NL', 'PL', 'PT', 'RO', 'SE', 'SI', 'SK',
+})
+
+COUNTRY_BLOCK_MAP = {
+    'CN': 'CN', 'HK': 'CN', 'MO': 'CN',
+    'US': 'US',
+    'JP': 'JP',
+    'KR': 'KR',
+    'TW': 'Other', 'IN': 'Other', 'SG': 'Other', 'IL': 'Other',
+    'GB': 'Other', 'CH': 'Other', 'NO': 'Other', 'IS': 'Other',
+    'CA': 'Other', 'AU': 'Other', 'NZ': 'Other',
+    'BR': 'Other', 'MX': 'Other', 'AR': 'Other',
+    'ZA': 'Other', 'TR': 'Other', 'SA': 'Other', 'AE': 'Other',
+    'RU': 'Other', 'UA': 'Other',
+}
+
+
+def _country_to_block(iso2: str) -> str:
+    """Map an ISO-2 country code to an origin block (EU / CN / US / JP / KR / Other / Unknown)."""
+    if not iso2 or (isinstance(iso2, float)):
+        return 'Unknown'
+    iso2 = str(iso2).strip().upper()
+    if not iso2 or iso2 in ('NAN', 'NONE', ''):
+        return 'Unknown'
+    if iso2 in EU_COUNTRIES:
+        return 'EU'
+    return COUNTRY_BLOCK_MAP.get(iso2, 'Other')
+
+
 def _gge_rate(row):
     """Compute GGE rate for a single row based on financial instrument."""
     inst = str(row.get('financial_instrument_class', '')).lower().strip()
@@ -738,6 +774,30 @@ def consolidate(
                          f"(GGE {row['total_gge']/1e9:.1f}B, {row['n_entities']:.0f} entities)")
     else:
         log.info("\nPhase 5: No parent groups provided — skipping group rollup")
+
+    # ------------------------------------------------------------------
+    # Phase 5b: Infer origin_block from hq_country (if company list has it)
+    # ------------------------------------------------------------------
+    if company_list_csv and Path(company_list_csv).exists() and 'origin_block' not in combined.columns:
+        try:
+            cl_peek = pd.read_csv(company_list_csv, nrows=0)
+            if 'hq_country' in cl_peek.columns:
+                cl = pd.read_csv(company_list_csv)
+                name_col = cl.columns[0]
+                hq_map = dict(zip(cl[name_col].str.strip(), cl['hq_country'].fillna('')))
+                group_col = 'parent_group' if 'parent_group' in combined.columns else ref_col
+                combined['origin_block'] = combined[group_col].map(
+                    lambda g: _country_to_block(hq_map.get(str(g).strip(), ''))
+                )
+                combined['hq_country'] = combined[group_col].map(
+                    lambda g: str(hq_map.get(str(g).strip(), '')).strip().upper() or 'Unknown'
+                )
+                combined['origin_desc'] = combined['origin_block']
+                n_known = (combined['origin_block'] != 'Unknown').sum()
+                log.info(f"\nPhase 5b: origin_block inferred from hq_country "
+                         f"({n_known:,} / {len(combined):,} rows mapped)")
+        except Exception as e:
+            log.warning(f"  hq_country inference skipped: {e}")
 
     # ------------------------------------------------------------------
     # Phase 6: Summary tables

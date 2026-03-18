@@ -179,6 +179,11 @@ SECTOR_COLORS = {
 def fmt_bn(x, _): return f'€{x/1e9:.0f}B'
 def fmt_bn1(x, _): return f'€{x/1e9:.1f}B'
 
+
+def _lbl(label: str) -> str:
+    """Return 'label ' (trailing space) if label non-empty, else ''."""
+    return f'{label} ' if label else ''
+
 # Core automotive = OEMs + truck OEMs only. Excludes semiconductors, battery materials,
 # tires, generic suppliers (thyssenkrupp, BASF, etc.) that have large non-auto revenue.
 CORE_AUTO_SECTORS = {'oem', 'truck_oem', 'battery', 'ev_charging'}
@@ -212,7 +217,7 @@ def _save_png(fig, name, plt_mod):
 # CHART GENERATORS
 # ============================================================================
 
-def chart_p01_mff_instrument(df, plt, mticker, Patch):
+def chart_p01_mff_instrument(df, plt, mticker, Patch, label: str = 'Automotive'):
     """MFF stacked bars by instrument — the 'really nice' chart."""
     mff_order = [p for p in MFF_PERIODS if p in df['mff_period'].unique()]
     mff_inst = df.groupby(['mff_period', 'instrument_simple'])['amount_eur'].sum().unstack(fill_value=0)
@@ -247,7 +252,7 @@ def chart_p01_mff_instrument(df, plt, mticker, Patch):
     ax.set_xticklabels(mff_order, fontsize=12)
     ax.set_ylabel('EUR', fontsize=12)
     ax.yaxis.set_major_formatter(mticker.FuncFormatter(fmt_bn))
-    ax.set_title('EU Automotive Support by MFF Period & Instrument', pad=15)
+    ax.set_title(f'EU {_lbl(label)}Support by MFF Period & Instrument', pad=15)
     ax.legend(loc='upper left', framealpha=0.95, edgecolor='#ccc')
     ax.set_xlim(-0.5, len(mff_order) - 0.5)
 
@@ -258,7 +263,7 @@ def chart_p01_mff_instrument(df, plt, mticker, Patch):
     _save_png(fig, 'P01_mff_instrument_stacked', plt)
 
 
-def chart_p02_mff_source(df, plt, mticker, Patch):
+def chart_p02_mff_source(df, plt, mticker, Patch, label: str = 'Automotive'):
     """MFF stacked bars by data source."""
     mff_order = [p for p in MFF_PERIODS if p in df['mff_period'].unique()]
     mff_src = df.groupby(['mff_period', 'source'])['amount_eur'].sum().unstack(fill_value=0)
@@ -291,7 +296,7 @@ def chart_p02_mff_source(df, plt, mticker, Patch):
     ax.set_xticklabels(mff_order, fontsize=12)
     ax.set_ylabel('EUR', fontsize=12)
     ax.yaxis.set_major_formatter(mticker.FuncFormatter(fmt_bn))
-    ax.set_title('EU Automotive Support by MFF Period & Data Source', pad=15)
+    ax.set_title(f'EU {_lbl(label)}Support by MFF Period & Data Source', pad=15)
     ax.legend(loc='upper left', framealpha=0.95, edgecolor='#ccc', ncol=2, fontsize=9)
     ax.set_xlim(-0.5, len(mff_order) - 0.5)
     fig.text(0.99, 0.01, 'Source: Bruegel EU Subsidies Database (2026)', ha='right', fontsize=8, color='#666')
@@ -299,7 +304,7 @@ def chart_p02_mff_source(df, plt, mticker, Patch):
     _save_png(fig, 'P02_mff_source_stacked', plt)
 
 
-def chart_p03_mff_fiscal(df, plt, mticker, Patch):
+def chart_p03_mff_fiscal(df, plt, mticker, Patch, label: str = 'Automotive'):
     """MFF stacked bars by fiscal source."""
     mff_order = [p for p in MFF_PERIODS if p in df['mff_period'].unique()]
     mff_fisc = df.groupby(['mff_period', 'fiscal_simple'])['amount_eur'].sum().unstack(fill_value=0)
@@ -333,7 +338,7 @@ def chart_p03_mff_fiscal(df, plt, mticker, Patch):
     ax.set_xticklabels(mff_order, fontsize=12)
     ax.set_ylabel('EUR', fontsize=12)
     ax.yaxis.set_major_formatter(mticker.FuncFormatter(fmt_bn))
-    ax.set_title('EU Automotive Support by MFF Period & Fiscal Source', pad=15)
+    ax.set_title(f'EU {_lbl(label)}Support by MFF Period & Fiscal Source', pad=15)
     ax.legend(loc='upper left', framealpha=0.95, edgecolor='#ccc', fontsize=9)
     ax.set_xlim(-0.5, len(mff_order) - 0.5)
     fig.text(0.99, 0.01, 'Source: Bruegel EU Subsidies Database (2026)', ha='right', fontsize=8, color='#666')
@@ -341,7 +346,7 @@ def chart_p03_mff_fiscal(df, plt, mticker, Patch):
     _save_png(fig, 'P03_mff_fiscal_stacked', plt)
 
 
-def chart_p04_annual_by_source(df, plt, mticker, Patch):
+def chart_p04_annual_by_source(df, plt, mticker, Patch, label: str = 'Automotive'):
     """Annual support stacked bar by data source (2007-2025)."""
     yrs = range(2007, 2026)
     src_yr = df[df['year'].between(2007, 2025)].groupby(['year', 'source'])['amount_eur'].sum().unstack(fill_value=0)
@@ -361,7 +366,7 @@ def chart_p04_annual_by_source(df, plt, mticker, Patch):
     ax.set_xlabel('Year', fontsize=12)
     ax.set_ylabel('EUR', fontsize=12)
     ax.yaxis.set_major_formatter(mticker.FuncFormatter(fmt_bn))
-    ax.set_title('EU Automotive Support by Year & Data Source (2007–2025)', pad=15)
+    ax.set_title(f'EU {_lbl(label)}Support by Year & Data Source (2007\u20132025)', pad=15)
     ax.legend(loc='upper left', framealpha=0.95, edgecolor='#ccc', ncol=2, fontsize=9)
     ax.set_xlim(2006.2, 2025.8)
 
@@ -375,7 +380,7 @@ def chart_p04_annual_by_source(df, plt, mticker, Patch):
     _save_png(fig, 'P04_annual_by_source', plt)
 
 
-def chart_p05_country_ranking(df, plt, mticker, Patch):
+def chart_p05_country_ranking(df, plt, mticker, Patch, label: str = 'Automotive'):
     """Top 15 granting countries with grants vs loans breakdown."""
     c_rank = df.groupby('country')['amount_eur'].sum().sort_values(ascending=False).head(15)
     countries = c_rank.index.tolist()
@@ -400,7 +405,7 @@ def chart_p05_country_ranking(df, plt, mticker, Patch):
     ax.invert_yaxis()
     ax.set_xlabel('EUR', fontsize=12)
     ax.xaxis.set_major_formatter(mticker.FuncFormatter(fmt_bn))
-    ax.set_title('Top 15 Countries: Automotive Support by Instrument', pad=15)
+    ax.set_title(f'Top 15 Countries: {_lbl(label)}Support by Instrument', pad=15)
     ax.legend(loc='lower right', framealpha=0.95, edgecolor='#ccc', fontsize=9)
 
     # Value labels
@@ -412,7 +417,7 @@ def chart_p05_country_ranking(df, plt, mticker, Patch):
     _save_png(fig, 'P05_country_instrument', plt)
 
 
-def chart_p06_top20_gge(df, plt, mticker, Patch):
+def chart_p06_top20_gge(df, plt, mticker, Patch, label: str = 'Automotive'):
     """Top 20 corporate groups by GGE (subsidy value), with face value comparison."""
     g_gge = df.groupby('parent_group').agg(
         face=('amount_eur', 'sum'),
@@ -464,7 +469,7 @@ def chart_p06_top20_gge(df, plt, mticker, Patch):
     _save_png(fig, 'P06_top20_gge', plt)
 
 
-def chart_p07_sector_dual(df, plt, mticker, Patch):
+def chart_p07_sector_dual(df, plt, mticker, Patch, label: str = 'Automotive'):
     """Sector breakdown: 2-panel face value vs GGE."""
     sec = df.groupby('sector_tag').agg(
         face=('amount_eur', 'sum'),
@@ -496,13 +501,13 @@ def chart_p07_sector_dual(df, plt, mticker, Patch):
     for i, v in enumerate(sec['gge'].values):
         ax2.text(v + sec['gge'].max()*0.01, i, f'€{v/1e9:.1f}B', va='center', fontsize=9)
 
-    fig.suptitle('Automotive Support by Sector: Face Value vs Subsidy Value', fontsize=15, fontweight='bold', y=1.02)
+    fig.suptitle(f'{_lbl(label)}Support by Sector: Face Value vs Subsidy Value', fontsize=15, fontweight='bold', y=1.02)
     fig.text(0.99, 0.01, 'Source: Bruegel EU Subsidies Database (2026)', ha='right', fontsize=8, color='#666')
     plt.tight_layout()
     _save_png(fig, 'P07_sector_face_vs_gge', plt)
 
 
-def chart_p08_shift_instrument(df, plt, mticker, Patch):
+def chart_p08_shift_instrument(df, plt, mticker, Patch, label: str = 'Automotive'):
     """Pre vs Post 2020: instrument composition side-by-side."""
     periods = [('Pre-2020\n(2007–2019)', (2007, 2019)), ('Post-2020\n(2020–2025)', (2020, 2025))]
     inst_order = ['Grant', 'Loan', 'Guarantee', 'Tax advantage', 'Equity', 'Other']
@@ -532,13 +537,13 @@ def chart_p08_shift_instrument(df, plt, mticker, Patch):
 
         axes[idx].set_title(f'{label}\n€{total/1e9:.1f}B total', fontsize=13, fontweight='bold')
 
-    fig.suptitle('Structural Shift in EU Automotive Support', fontsize=15, fontweight='bold', y=1.02)
+    fig.suptitle(f'Structural Shift in EU {_lbl(label)}Support', fontsize=15, fontweight='bold', y=1.02)
     fig.text(0.99, 0.01, 'Source: Bruegel EU Subsidies Database (2026)', ha='right', fontsize=8, color='#666')
     plt.tight_layout()
     _save_png(fig, 'P08_shift_instrument', plt)
 
 
-def chart_p09_top10_face_vs_gge(df, plt, mticker, Patch):
+def chart_p09_top10_face_vs_gge(df, plt, mticker, Patch, label: str = 'Automotive'):
     """Top 10 groups: paired face value vs GGE bars."""
     g = df.groupby('parent_group').agg(
         face=('amount_eur', 'sum'),
@@ -571,7 +576,7 @@ def chart_p09_top10_face_vs_gge(df, plt, mticker, Patch):
     _save_png(fig, 'P09_top10_face_vs_gge', plt)
 
 
-def chart_p10_country_timeseries(df, plt, mticker, Patch):
+def chart_p10_country_timeseries(df, plt, mticker, Patch, label: str = 'Automotive'):
     """Annual grants by top 6 granting countries — stacked area."""
     # Only grants (most policy-relevant)
     grants = df[df['instrument_simple'] == 'Grant']
@@ -591,7 +596,7 @@ def chart_p10_country_timeseries(df, plt, mticker, Patch):
     ax.set_xlabel('Year', fontsize=12)
     ax.set_ylabel('EUR (grants only)', fontsize=12)
     ax.yaxis.set_major_formatter(mticker.FuncFormatter(fmt_bn))
-    ax.set_title('Grant-Based Automotive Support by Country (Top 6, 2007–2025)', pad=15)
+    ax.set_title(f'Grant-Based {_lbl(label)}Support by Country (Top 6, 2007\u20132025)', pad=15)
     ax.legend(loc='upper left', framealpha=0.95, edgecolor='#ccc', fontsize=10)
     ax.set_xlim(2007, 2025)
 
@@ -600,7 +605,7 @@ def chart_p10_country_timeseries(df, plt, mticker, Patch):
     _save_png(fig, 'P10_country_grants_timeseries', plt)
 
 
-def chart_p11_innovfund(df, plt, mticker, Patch):
+def chart_p11_innovfund(df, plt, mticker, Patch, label: str = 'Automotive'):
     """Innovation Fund automotive breakdown — horizontal lollipop by project."""
     # Filter INNOVFUND + CINEA INNOVFUND rows, deduplicate by source_record_id
     inno = df[
@@ -655,7 +660,7 @@ def chart_p11_innovfund(df, plt, mticker, Patch):
                 va='center', fontsize=9, color='#333')
 
     total = grp['eur'].sum()
-    ax.set_title(f'EU Innovation Fund — Automotive Beneficiaries\n'
+    ax.set_title(f'EU Innovation Fund — {_lbl(label)}Beneficiaries\n'
                  f'{len(grp)} groups, €{total/1e6:.0f}M total across {int(grp["rows"].sum())} grants',
                  fontsize=14, fontweight='bold', pad=15)
     ax.set_xlabel('Grant Amount (EUR)', fontsize=11)
@@ -675,7 +680,7 @@ def chart_p11_innovfund(df, plt, mticker, Patch):
     _save_png(fig, 'P11_innovfund_breakdown', plt)
 
 
-def chart_p12_big_tickets_by_source(df, plt, mticker, Patch):
+def chart_p12_big_tickets_by_source(df, plt, mticker, Patch, label: str = 'Automotive'):
     """Per-source 'big ticket' lollipop charts — top 10 single grants per source."""
     # Load big ticket data
     bt_path = CONSOL_DIR / 'big_ticket_automotive_single_row.csv'
@@ -752,7 +757,7 @@ def chart_p12_big_tickets_by_source(df, plt, mticker, Patch):
         r, c = divmod(idx, n_cols)
         axes[r][c].set_visible(False)
 
-    fig.suptitle('Largest Single Automotive Awards by Data Source',
+    fig.suptitle(f'Largest Single {_lbl(label)}Awards by Data Source',
                  fontsize=16, fontweight='bold', y=1.01)
     fig.text(0.99, 0.005, 'Source: Bruegel EU Subsidies Database (2026)',
              ha='right', fontsize=8, color='#666')
@@ -760,7 +765,7 @@ def chart_p12_big_tickets_by_source(df, plt, mticker, Patch):
     _save_png(fig, 'P12_big_tickets_by_source', plt)
 
 
-def chart_p13_big_tickets_cumulative(df, plt, mticker, Patch):
+def chart_p13_big_tickets_cumulative(df, plt, mticker, Patch, label: str = 'Automotive'):
     """Cumulative big-ticket bar chart — top 15 single automotive awards across ALL sources."""
     bt_path = CONSOL_DIR / 'big_ticket_automotive_single_row.csv'
     if not bt_path.exists():
@@ -817,7 +822,7 @@ def chart_p13_big_tickets_cumulative(df, plt, mticker, Patch):
               framealpha=0.95, edgecolor='#ccc', ncol=2, title='Source / Instrument', title_fontsize=10)
 
     total = top15['amount_eur'].sum()
-    ax.set_title(f'15 Largest Individual Automotive Awards\n'
+    ax.set_title(f'15 Largest Individual {_lbl(label)}Awards\n'
                  f'€{total/1e9:.1f}B combined across {len(used_sources)} sources',
                  fontsize=14, fontweight='bold', pad=15)
 
@@ -830,7 +835,7 @@ def chart_p13_big_tickets_cumulative(df, plt, mticker, Patch):
 # ---------------------------------------------------------------------------
 # P14: MFF × Sector stacked bars
 # ---------------------------------------------------------------------------
-def chart_p14_mff_sector(df, plt, mticker, Patch):
+def chart_p14_mff_sector(df, plt, mticker, Patch, label: str = 'Automotive'):
     """MFF stacked bars by company sector."""
     mff_order = [p for p in MFF_PERIODS if p in df['mff_period'].unique()]
     sector_col = 'sector_tag' if 'sector_tag' in df.columns else None
@@ -867,7 +872,7 @@ def chart_p14_mff_sector(df, plt, mticker, Patch):
     ax.set_xticklabels(mff_order, fontsize=12)
     ax.set_ylabel('EUR', fontsize=12)
     ax.yaxis.set_major_formatter(mticker.FuncFormatter(fmt_bn))
-    ax.set_title('EU Automotive Support by MFF Period & Sector', pad=15)
+    ax.set_title(f'EU {_lbl(label)}Support by MFF Period & Sector', pad=15)
     ax.legend(loc='upper left', framealpha=0.95, edgecolor='#ccc', fontsize=9)
     ax.set_xlim(-0.5, len(mff_order) - 0.5)
     fig.text(0.99, 0.01, 'Source: Bruegel EU Subsidies Database (2026)', ha='right', fontsize=8, color='#666')
@@ -878,7 +883,7 @@ def chart_p14_mff_sector(df, plt, mticker, Patch):
 # ---------------------------------------------------------------------------
 # P12b: Big tickets by source — AGGREGATED per beneficiary
 # ---------------------------------------------------------------------------
-def chart_p12b_big_tickets_aggregated(df, plt, mticker, Patch):
+def chart_p12b_big_tickets_aggregated(df, plt, mticker, Patch, label: str = 'Automotive'):
     """Per-source big ticket lollipops — aggregated by parent_group (no duplicates)."""
     sources = sorted(s for s in df['source'].unique() if s != 'RRF')
     n_sources = len(sources)
@@ -941,7 +946,7 @@ def chart_p12b_big_tickets_aggregated(df, plt, mticker, Patch):
         r, c = divmod(idx, n_cols)
         axes[r][c].set_visible(False)
 
-    fig.suptitle('Top Automotive Corporate Groups by Data Source',
+    fig.suptitle(f'Top {_lbl(label)}Corporate Groups by Data Source',
                  fontsize=16, fontweight='bold', y=1.01)
     fig.text(0.99, 0.005, 'Source: Bruegel EU Subsidies Database (2026)',
              ha='right', fontsize=8, color='#666')
@@ -952,7 +957,7 @@ def chart_p12b_big_tickets_aggregated(df, plt, mticker, Patch):
 # ---------------------------------------------------------------------------
 # Core Automotive versions — P06c, P09c, P13c
 # ---------------------------------------------------------------------------
-def chart_p06c_top20_gge_core(df, plt, mticker, Patch):
+def chart_p06c_top20_gge_core(df, plt, mticker, Patch, label: str = 'Automotive'):
     """Top 20 groups by GGE — core automotive only (no semiconductors/materials/tires)."""
     core = df[~df['parent_group'].isin(PERIPHERAL_GROUPS)]
     grp = core.groupby('parent_group').agg(face=('amount_eur','sum'), gge=('gge_eur','sum'))\
@@ -973,8 +978,8 @@ def chart_p06c_top20_gge_core(df, plt, mticker, Patch):
 
     total_face = core['amount_eur'].sum()
     total_gge = core['gge_eur'].sum()
-    ax.set_title(f'Top 20 Core Automotive Groups by Subsidy Value (GGE)\n'
-                 f'Excl. semiconductors, materials, tires — €{total_gge/1e9:.1f}B GGE / €{total_face/1e9:.1f}B face',
+    ax.set_title(f'Top 20 Core {_lbl(label)}Groups by Subsidy Value (GGE)\n'
+                 f'Excl. peripheral groups — \u20ac{total_gge/1e9:.1f}B GGE / \u20ac{total_face/1e9:.1f}B face',
                  fontsize=13, fontweight='bold', pad=15)
     ax.legend(loc='lower right', fontsize=10, framealpha=0.95, edgecolor='#ccc')
     fig.text(0.99, 0.01, 'Source: Bruegel EU Subsidies Database, GGE per EU State Aid Scoreboard (2026)',
@@ -983,7 +988,7 @@ def chart_p06c_top20_gge_core(df, plt, mticker, Patch):
     _save_png(fig, 'P06c_top20_gge_core_auto', plt)
 
 
-def chart_p09c_top10_core(df, plt, mticker, Patch):
+def chart_p09c_top10_core(df, plt, mticker, Patch, label: str = 'Automotive'):
     """Top 10 face vs GGE — core automotive only."""
     core = df[~df['parent_group'].isin(PERIPHERAL_GROUPS)]
     grp = core.groupby('parent_group').agg(face=('amount_eur','sum'), gge=('gge_eur','sum'))\
@@ -1003,7 +1008,7 @@ def chart_p09c_top10_core(df, plt, mticker, Patch):
         ax.text(row['gge'] + grp['face'].max()*0.01, i+0.18, f'€{row["gge"]/1e9:.1f}B',
                 va='center', fontsize=8, color='#C62828')
 
-    ax.set_title('Top 10 Core Automotive Groups: Face Value vs Subsidy Value',
+    ax.set_title(f'Top 10 Core {_lbl(label)}Groups: Face Value vs Subsidy Value',
                  fontsize=13, fontweight='bold', pad=15)
     ax.legend(loc='lower right', fontsize=10, framealpha=0.95, edgecolor='#ccc')
     fig.text(0.99, 0.01, 'Source: Bruegel EU Subsidies Database, GGE per EU State Aid Scoreboard (2026)',
@@ -1012,7 +1017,7 @@ def chart_p09c_top10_core(df, plt, mticker, Patch):
     _save_png(fig, 'P09c_top10_face_vs_gge_core', plt)
 
 
-def chart_p13c_big_tickets_core(df, plt, mticker, Patch):
+def chart_p13c_big_tickets_core(df, plt, mticker, Patch, label: str = 'Automotive'):
     """Top 15 big tickets — core automotive only."""
     bt_path = CONSOL_DIR / 'big_ticket_automotive_single_row.csv'
     if not bt_path.exists():
@@ -1065,7 +1070,7 @@ def chart_p13c_big_tickets_core(df, plt, mticker, Patch):
               framealpha=0.95, edgecolor='#ccc', ncol=2, title='Source / Instrument', title_fontsize=10)
 
     total = top15['amount_eur'].sum()
-    ax.set_title(f'15 Largest Core Automotive Awards (excl. semis/materials/tires)\n'
+    ax.set_title(f'15 Largest Core {_lbl(label)}Awards (excl. peripheral groups)\n'
                  f'€{total/1e9:.1f}B combined',
                  fontsize=14, fontweight='bold', pad=15)
     fig.text(0.99, 0.01, 'Source: Bruegel EU Subsidies Database (2026)',
@@ -1074,7 +1079,7 @@ def chart_p13c_big_tickets_core(df, plt, mticker, Patch):
     _save_png(fig, 'P13c_top15_big_tickets_core', plt)
 
 
-def chart_p15c_top20_aggregated_core(df, plt, mticker, Patch):
+def chart_p15c_top20_aggregated_core(df, plt, mticker, Patch, label: str = 'Automotive'):
     """Top 20 core automotive groups by total face value — stacked by source."""
     core = df[~df['parent_group'].isin(PERIPHERAL_GROUPS)]
     grp = core.groupby(['parent_group', 'source'])['amount_eur'].sum().unstack(fill_value=0)
@@ -1112,8 +1117,8 @@ def chart_p15c_top20_aggregated_core(df, plt, mticker, Patch):
                 fontsize=7.5, color='#999')
 
     total = core['amount_eur'].sum()
-    ax.set_title(f'Top 20 Core Automotive Groups — Total Support by Source'
-                 f'  —  €{total/1e9:.1f}B total',
+    ax.set_title(f'Top 20 Core {_lbl(label)}Groups — Total Support by Source'
+                 f'  —  \u20ac{total/1e9:.1f}B total',
                  fontsize=13, fontweight='bold', pad=15)
     ax.legend(loc='lower right', framealpha=0.95, edgecolor='#ccc', fontsize=9,
               ncol=2, title='Data Source', title_fontsize=10)
@@ -1121,7 +1126,7 @@ def chart_p15c_top20_aggregated_core(df, plt, mticker, Patch):
     _save_png(fig, 'P15c_top20_aggregated_core', plt)
 
 
-def chart_p05c_country_core(df, plt, mticker, Patch):
+def chart_p05c_country_core(df, plt, mticker, Patch, label: str = 'Automotive'):
     """Top 15 countries — core automotive only."""
     core = df[~df['parent_group'].isin(PERIPHERAL_GROUPS)]
     country_data = core.groupby(['country', 'instrument_simple'])['amount_eur'].sum().unstack(fill_value=0)
@@ -1147,7 +1152,7 @@ def chart_p05c_country_core(df, plt, mticker, Patch):
     for i, total in enumerate(country_totals.values):
         ax.text(total + country_totals.max()*0.01, i, f'€{total/1e9:.1f}B', va='center', fontsize=9)
 
-    ax.set_title(f'Top 15 Countries — Core Automotive (excl. semis/materials/tires)\n'
+    ax.set_title(f'Top 15 Countries — Core {_lbl(label)}(excl. peripheral groups)\n'
                  f'€{core["amount_eur"].sum()/1e9:.1f}B total',
                  fontsize=13, fontweight='bold', pad=15)
     ax.legend(loc='lower right', framealpha=0.95, edgecolor='#ccc', fontsize=9)
@@ -1160,7 +1165,7 @@ def chart_p05c_country_core(df, plt, mticker, Patch):
 # MAIN
 # ============================================================================
 
-def main():
+def main(label: str = 'Automotive') -> None:
     PNG_DIR.mkdir(parents=True, exist_ok=True)
     log.info("=" * 70)
     log.info("PRESENTATION CHART SUITE — Starting")
@@ -1198,7 +1203,7 @@ def main():
     for name, fn in generators:
         try:
             log.info(f"  {name}...")
-            fn(df, plt, mticker, Patch)
+            fn(df, plt, mticker, Patch, label=label)
             chart_count += 1
         except Exception as e:
             log.error(f"  FAILED {name}: {e}")

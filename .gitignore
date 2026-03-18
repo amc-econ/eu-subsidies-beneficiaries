@@ -57,3 +57,7 @@ logs/
 
 # Cache
 cache/
+
+# Ad-hoc analysis scripts — keep locally, don't commit
+audit_double_counting.py
+data/processed/audit/

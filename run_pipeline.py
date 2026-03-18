@@ -49,6 +49,42 @@ log = logging.getLogger('run_pipeline')
 # Repo root = directory containing this script
 REPO_ROOT = Path(__file__).resolve().parent
 
+# Pre-built master dataset — downloaded automatically on first run.
+# After creating a GitHub Release and uploading the file, update this URL.
+MASTER_PARQUET = REPO_ROOT / 'data' / 'processed' / 'master_dataset.parquet'
+MASTER_DATASET_URL = (
+    "https://github.com/amc-econ/eu-subsidies-beneficiaries"
+    "/releases/download/v1.0/master_dataset.parquet"
+)
+
+
+def _ensure_master_dataset() -> bool:
+    """Download master_dataset.parquet if not present. Returns True if ready."""
+    if MASTER_PARQUET.exists() and MASTER_PARQUET.stat().st_size > 1_000_000:
+        return True
+    log.info("master_dataset.parquet not found locally.")
+    log.info(f"Downloading from GitHub Releases (~1.7 GB)...")
+    MASTER_PARQUET.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        import urllib.request
+
+        def _progress(count, block_size, total_size):
+            if total_size > 0:
+                pct = min(count * block_size * 100 / total_size, 100)
+                mb = count * block_size / 1_000_000
+                total_mb = total_size / 1_000_000
+                print(f"\r  {mb:.0f} / {total_mb:.0f} MB ({pct:.1f}%)", end='', flush=True)
+
+        urllib.request.urlretrieve(MASTER_DATASET_URL, MASTER_PARQUET, reporthook=_progress)
+        print()
+        log.info("Download complete.")
+        return True
+    except Exception as e:
+        log.error(f"Download failed: {e}")
+        log.error(f"Download manually from: {MASTER_DATASET_URL}")
+        log.error(f"and place at: {MASTER_PARQUET}")
+        return False
+
 
 def stage_harmonize() -> None:
     """Stage 1: Harmonize raw data sources into standardized CSVs."""
@@ -117,11 +153,9 @@ def stage_match(
     from src.matching.generic_matcher import MatchConfig, run_matching
     from src.paths import master_dataset_path, ENRICHMENT_DIR
 
-    master_csv = master_dataset_path()
-    if not master_csv.exists():
-        log.error(f"Master dataset not found: {master_csv}")
-        log.error("Run --stage master first.")
+    if not _ensure_master_dataset():
         return
+    master_csv = master_dataset_path()
 
     if not company_list:
         log.error("--company-list is required for matching stage")
@@ -321,7 +355,7 @@ def stage_automotive() -> None:
     log.info("\nGenerating automotive presentation charts...")
     try:
         from examples.automotive.presentation_charts import main as charts_main
-        charts_main()
+        charts_main(label='Automotive')
     except Exception as e:
         log.warning(f"Automotive chart generation skipped: {e}")
 
@@ -352,8 +386,17 @@ def main():
         '--config', '-cfg',
         help='Path to JSON config (parent_groups, sector_keywords, match overrides)',
     )
+    parser.add_argument(
+        '--download-data',
+        action='store_true',
+        help='Download master_dataset.parquet (~1.7 GB) without running any stage',
+    )
 
     args = parser.parse_args()
+
+    if args.download_data:
+        _ensure_master_dataset()
+        sys.exit(0)
 
     if args.stage is None:
         parser.print_help()

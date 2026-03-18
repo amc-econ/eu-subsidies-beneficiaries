@@ -70,7 +70,7 @@ SECTOR_TAGS = _load_json('sector_tags.json')
 # NATIONALITY ASSIGNMENT
 # ============================================================================
 
-def assign_nationality(group_name: str, origin_region: str = None) -> tuple:
+def assign_nationality(group_name: str, origin_region: str = None, hq_country: str = None) -> tuple:
     """Return (origin_block, hq_country, description) for a parent group."""
     if group_name in COMPANY_NATIONALITY:
         return COMPANY_NATIONALITY[group_name]
@@ -78,7 +78,12 @@ def assign_nationality(group_name: str, origin_region: str = None) -> tuple:
         return ('CN', 'CN', 'Chinese')
     elif origin_region == 'other_non_eu':
         return ('Other', 'Other', 'Other non-EU')
-    return ('EU', 'Unknown', 'EU (presumed)')
+    if hq_country:
+        from src.matching.consolidation import _country_to_block
+        block = _country_to_block(hq_country)
+        if block != 'Unknown':
+            return (block, hq_country.upper(), hq_country.upper())
+    return ('Other', 'Unknown', 'Unknown origin')
 
 
 def _enrich_nationality_and_sector(df: pd.DataFrame) -> pd.DataFrame:
@@ -93,11 +98,11 @@ def _enrich_nationality_and_sector(df: pd.DataFrame) -> pd.DataFrame:
         group_nat[grp] = assign_nationality(grp, common_origin)
 
     df['origin_block'] = df['parent_group'].map(
-        lambda g: group_nat.get(g, ('EU', 'Unknown', 'Unknown'))[0])
+        lambda g: group_nat.get(g, ('Other', 'Unknown', 'Unknown origin'))[0])
     df['hq_country'] = df['parent_group'].map(
-        lambda g: group_nat.get(g, ('EU', 'Unknown', 'Unknown'))[1])
+        lambda g: group_nat.get(g, ('Other', 'Unknown', 'Unknown origin'))[1])
     df['origin_desc'] = df['parent_group'].map(
-        lambda g: group_nat.get(g, ('EU', 'Unknown', 'Unknown'))[2])
+        lambda g: group_nat.get(g, ('Other', 'Unknown', 'Unknown origin'))[2])
     df['sector_tag'] = df['parent_group'].map(SECTOR_TAGS).fillna('other_automotive')
     return df
 
