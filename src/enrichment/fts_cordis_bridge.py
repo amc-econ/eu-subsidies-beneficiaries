@@ -20,11 +20,11 @@ This script:
 5. Outputs enriched FTS table
 
 Usage (as module):
-  from src.data_extraction.enrichment.fts_cordis_bridge import run_fts_cordis_bridge
+  from src.enrichment.fts_cordis_bridge import run_fts_cordis_bridge
   run_fts_cordis_bridge(company_list_csv='path/to/companies.csv')
 
 Usage (CLI):
-  python -m src.data_extraction.enrichment.fts_cordis_bridge --company-list path/to/companies.csv
+  python -m src.enrichment.fts_cordis_bridge --company-list path/to/companies.csv
 """
 
 import pandas as pd

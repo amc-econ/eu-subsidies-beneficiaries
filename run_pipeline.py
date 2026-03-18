@@ -54,7 +54,7 @@ def stage_harmonize() -> None:
     """Stage 1: Harmonize raw data sources into standardized CSVs."""
     log.info("Stage 1: Harmonization")
 
-    from src.data_cleaning.harmonization.run_all import main as harmonize_main
+    from src.harmonization.run_all import main as harmonize_main
     data_dir = REPO_ROOT / 'data' / 'raw'
     output_dir = REPO_ROOT / 'data' / 'processed'
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -69,14 +69,14 @@ def stage_enrich() -> None:
 
     log.info("Running CORDIS enrichment...")
     try:
-        from src.data_extraction.enrichment.cordis_enrichment import main as cordis_main
+        from src.enrichment.cordis_enrichment import main as cordis_main
         cordis_main()
     except Exception as e:
         log.warning(f"CORDIS enrichment skipped: {e}")
 
     log.info("Running EIB promoter scraper...")
     try:
-        from src.data_extraction.enrichment.eib_promoter_scraper import main as eib_main
+        from src.enrichment.eib_promoter_scraper import main as eib_main
         eib_main()
     except Exception as e:
         log.warning(f"EIB promoter scraper skipped: {e}")
@@ -86,7 +86,7 @@ def stage_master() -> None:
     """Stage 3: Build master dataset from standardized CSVs."""
     log.info("Stage 3: Master dataset build")
 
-    from src.data_cleaning.master.builder import main as master_main
+    from src.master.builder import main as master_main
     output_dir = REPO_ROOT / 'data' / 'processed'
     master_main(output_dir=output_dir)
 
@@ -114,7 +114,7 @@ def stage_match(
     """
     log.info("Stage 4: Entity matching + enrichment + consolidation")
 
-    from src.data_extraction.matching.generic_matcher import MatchConfig, run_matching
+    from src.matching.generic_matcher import MatchConfig, run_matching
     from src.paths import master_dataset_path, ENRICHMENT_DIR
 
     master_csv = master_dataset_path()
@@ -175,7 +175,7 @@ def stage_match(
     # FTS-CORDIS bridge
     log.info("\nRunning FTS-CORDIS bridge...")
     try:
-        from src.data_extraction.enrichment.fts_cordis_bridge import run_fts_cordis_bridge
+        from src.enrichment.fts_cordis_bridge import run_fts_cordis_bridge
         run_fts_cordis_bridge(
             company_list_csv=str(company_list_path),
             aliases_json=str(aliases_path) if aliases_path else None,
@@ -188,7 +188,7 @@ def stage_match(
     # ETS free allocation
     log.info("\nRunning ETS enrichment...")
     try:
-        from src.data_extraction.enrichment.ets_free_allocation import run_ets_enrichment
+        from src.enrichment.ets_free_allocation import run_ets_enrichment
         nace_filter = config_data.get('nace_filter', None)
         run_ets_enrichment(
             company_list_csv=str(company_list_path),
@@ -202,7 +202,7 @@ def stage_match(
     # IPCEI reference
     log.info("\nRunning IPCEI enrichment...")
     try:
-        from src.data_extraction.enrichment.ipcei_reference import run_ipcei_enrichment
+        from src.enrichment.ipcei_reference import run_ipcei_enrichment
         run_ipcei_enrichment(
             company_list_csv=str(company_list_path),
             aliases_json=str(aliases_path) if aliases_path else None,
@@ -214,7 +214,7 @@ def stage_match(
     # FTS deep mining
     log.info("\nRunning FTS deep mining...")
     try:
-        from src.data_extraction.enrichment.fts_deep_mining import run_fts_deep_mining
+        from src.enrichment.fts_deep_mining import run_fts_deep_mining
         run_fts_deep_mining(
             company_list_csv=str(company_list_path),
             matched_csv=str(match_log),
@@ -227,7 +227,7 @@ def stage_match(
     # High-value forensics
     log.info("\nRunning high-value forensics...")
     try:
-        from src.data_extraction.enrichment.highvalue_forensics import run_highvalue_forensics
+        from src.enrichment.highvalue_forensics import run_highvalue_forensics
         run_highvalue_forensics(
             company_list_csv=str(company_list_path),
             matched_csv=str(match_log),
@@ -238,7 +238,7 @@ def stage_match(
 
     # ---- Step 3: Consolidation ----
     log.info("\n--- Step 3: Consolidation ---")
-    from src.data_extraction.matching.consolidation import consolidate
+    from src.matching.consolidation import consolidate
 
     # Resolve parent_groups path from config
     parent_groups = config_data.get('parent_groups', None)
@@ -284,7 +284,7 @@ def stage_automotive() -> None:
     config_json = REPO_ROOT / 'examples' / 'automotive' / 'config' / 'pipeline_config.json'
 
     # Build MatchConfig with Python-based FP patterns (can't be serialized to JSON)
-    from src.data_extraction.matching.generic_matcher import MatchConfig
+    from src.matching.generic_matcher import MatchConfig
     from examples.automotive.config import (
         AUTOMOTIVE_CONTEXTUAL_BLOCKLIST,
         AUTOMOTIVE_EXACT_ONLY,

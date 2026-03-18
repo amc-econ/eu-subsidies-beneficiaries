@@ -21,7 +21,7 @@ Outputs:
   output/fts_mining_summary.txt        -- human-readable summary
 
 Usage:
-  from src.data_extraction.enrichment.fts_deep_mining import run_fts_deep_mining
+  from src.enrichment.fts_deep_mining import run_fts_deep_mining
   run_fts_deep_mining('companies.csv', 'matched.csv')
 """
 

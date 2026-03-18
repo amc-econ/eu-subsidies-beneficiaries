@@ -20,7 +20,7 @@ Output:
 Does NOT modify any canonical pipeline files. This is a derived dataset.
 
 Usage:
-  python -m src.data_extraction.enrichment.cordis_enrichment
+  python -m src.enrichment.cordis_enrichment
 """
 
 import pandas as pd

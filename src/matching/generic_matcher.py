@@ -21,7 +21,7 @@ Reads master_dataset.csv in chunks (memory-safe for 6+ GB files).
 Uses rapidfuzz for fuzzy matching. No ML dependencies.
 
 Usage:
-    from src.data_extraction.matching.generic_matcher import run_matching, MatchConfig
+    from src.matching.generic_matcher import run_matching, MatchConfig
 
     run_matching(
         master_csv=Path('data/processed/master_dataset.csv'),

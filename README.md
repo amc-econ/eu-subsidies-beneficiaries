@@ -175,22 +175,22 @@ Place raw source files in `data/raw/` first.
 
 ```
 data/raw/                        [1] HARMONIZATION
-  12 source files          -->   src/data_cleaning/harmonization/
+  12 source files          -->   src/harmonization/
                                     18 modules, 36-column schema
                                         |
                                         v
                                  [2] PRE-MATCH ENRICHMENT
-                                 src/data_extraction/enrichment/
+                                 src/enrichment/
                                     CORDIS org join, EIB promoter scrape
                                         |
                                         v
 data/processed/                  [3] MASTER BUILD
-  master_dataset.parquet   <--   src/data_cleaning/master/builder.py
+  master_dataset.parquet   <--   src/master/builder.py
                                     ~27M rows, ~25.7M primary records
                                         |
                                         v
                                  [4] ENTITY MATCHING
-                                 src/data_extraction/matching/generic_matcher.py
+                                 src/matching/generic_matcher.py
                                     Layer A: exact + fuzzy (rapidfuzz)
                                     Layer B: contextual regex on descriptions
                                     Dedup optimisation: matches ~920K unique names,

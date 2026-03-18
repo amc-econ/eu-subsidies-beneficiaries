@@ -8,11 +8,11 @@ Ships with curated participant data for 6 IPCEIs (Batteries 1&2, Microelectronic
 
 Usage:
   # As library
-  from src.data_extraction.enrichment.ipcei_reference import run_ipcei_enrichment
+  from src.enrichment.ipcei_reference import run_ipcei_enrichment
   run_ipcei_enrichment('my_companies.csv')
 
   # CLI
-  python -m src.data_extraction.enrichment.ipcei_reference --company-list my_companies.csv
+  python -m src.enrichment.ipcei_reference --company-list my_companies.csv
 """
 
 import pandas as pd

@@ -29,9 +29,9 @@ Output:
 Dependencies: pandas, requests (standard + two common packages)
 
 Usage:
-    python -m src.data_extraction.enrichment.cordis_api_backfill
-    python -m src.data_extraction.enrichment.cordis_api_backfill --dry-run
-    python -m src.data_extraction.enrichment.cordis_api_backfill --rate-limit 0.5
+    python -m src.enrichment.cordis_api_backfill
+    python -m src.enrichment.cordis_api_backfill --dry-run
+    python -m src.enrichment.cordis_api_backfill --rate-limit 0.5
 """
 
 import argparse
@@ -497,7 +497,7 @@ def regenerate_enriched(combined_participants: pd.DataFrame) -> None:
     log.info("Regenerating enriched RESEARCH dataset...")
 
     # Import the enrichment function from the sibling module
-    from src.data_extraction.enrichment.cordis_enrichment import build_enriched_research
+    from src.enrichment.cordis_enrichment import build_enriched_research
 
     # Load RESEARCH
     research = pd.read_csv(RESEARCH_CSV)

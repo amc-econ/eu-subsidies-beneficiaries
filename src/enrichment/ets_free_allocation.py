@@ -20,7 +20,7 @@ Data source: https://euets.info/ (EUTL database, Oct 2024 snapshot)
 ZIP: data/reference/eutl_2024_202410.zip
 
 Usage:
-  from src.data_extraction.enrichment.ets_free_allocation import run_ets_enrichment
+  from src.enrichment.ets_free_allocation import run_ets_enrichment
   run_ets_enrichment('companies.csv', aliases_json='aliases.json', nace_filter='29')
 """
 

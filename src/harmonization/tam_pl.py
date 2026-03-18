@@ -46,7 +46,7 @@ RESPONSE SCHEMA (per record):
 Country: PL (hardcoded)
 
 Usage (scrape):
-    python -m src.data_cleaning.harmonization.tam_pl --scrape
+    python -m src.harmonization.tam_pl --scrape
 
 Usage (standardize from cached data):
     Called from tam_supplements.py via standardize(data_dir, log)
@@ -509,7 +509,7 @@ def standardize(data_dir: Path, log: logging.Logger) -> pd.DataFrame:
             _build_csv_from_cache(log)
         else:
             log.warning("  No Polish state aid data found.")
-            log.warning("  Run: python -m src.data_cleaning.harmonization.tam_pl --scrape")
+            log.warning("  Run: python -m src.harmonization.tam_pl --scrape")
             return pd.DataFrame(columns=COMMON_COLUMNS)
 
     if not raw_csv.exists():
@@ -677,8 +677,8 @@ if __name__ == '__main__':
         _build_csv_from_cache(log)
     else:
         log.info("Usage:")
-        log.info("  python -m src.data_cleaning.harmonization.tam_pl --scrape     Full scrape")
-        log.info("  python -m src.data_cleaning.harmonization.tam_pl --build-csv  Build CSV from cache")
+        log.info("  python -m src.harmonization.tam_pl --scrape     Full scrape")
+        log.info("  python -m src.harmonization.tam_pl --build-csv  Build CSV from cache")
         log.info("")
         log.info("  SUDOP API: async 3-step pattern (submit → poll → fetch)")
         log.info("  Phase 1: ~52 codes × ~80s batch = ~25 min")

@@ -648,7 +648,7 @@ def run(
 def main(data_dir: Path | None = None, output_dir: Path | None = None) -> None:
     """Run harmonization pipeline from the command line or as a library call."""
     if data_dir is None or output_dir is None:
-        # Default: repo root is 4 parents up from src/data_cleaning/harmonization/run_all.py
+        # Default: repo root is 4 parents up from src/harmonization/run_all.py
         import os
         project_root = Path(os.environ.get(
             'SUBSIDIES_PROJECT_ROOT',

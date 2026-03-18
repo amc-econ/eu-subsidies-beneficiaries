@@ -20,7 +20,7 @@ Pipeline:
   8. Save all outputs
 
 Usage:
-  from src.data_extraction.matching.consolidation import consolidate
+  from src.matching.consolidation import consolidate
   consolidate(match_log, output_dir, parent_groups='parent_groups.json')
 """
 

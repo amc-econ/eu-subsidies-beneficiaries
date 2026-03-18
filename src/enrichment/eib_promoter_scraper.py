@@ -19,7 +19,7 @@ Strategy:
 Cached, resumable, rate-limited (0.5s default).
 
 Usage:
-  python -m src.data_extraction.enrichment.eib_promoter_scraper [--limit N] [--rate-limit 0.5]
+  python -m src.enrichment.eib_promoter_scraper [--limit N] [--rate-limit 0.5]
 """
 
 import pandas as pd

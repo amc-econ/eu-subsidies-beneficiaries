@@ -16,7 +16,7 @@ infosubvenciones.es), reducing total pages from ~126K to ~6.3K.
 Pages are cached as JSON files for resume capability.
 
 Usage (scrape only):
-    python -m src.data_cleaning.harmonization.tam_es --scrape
+    python -m src.harmonization.tam_es --scrape
 
 Usage (standardize from cached data):
     Called from tam_supplements.py via standardize(data_dir, log)
@@ -270,7 +270,7 @@ def standardize(data_dir: Path, log: logging.Logger) -> pd.DataFrame:
             df.to_csv(raw_csv, index=False, encoding='utf-8')
             log.info(f"  Built CSV: {len(df):,} rows")
         else:
-            log.warning("  No BDNS data available. Run: python -m src.data_cleaning.harmonization.tam_es --scrape")
+            log.warning("  No BDNS data available. Run: python -m src.harmonization.tam_es --scrape")
             return pd.DataFrame(columns=COMMON_COLUMNS)
 
     df = pd.read_csv(raw_csv, low_memory=False)
@@ -359,8 +359,8 @@ if __name__ == '__main__':
         _build_csv_from_cache(log)
     else:
         log.info("Usage:")
-        log.info("  python -m src.data_cleaning.harmonization.tam_es --scrape      Full scrape (~1h)")
-        log.info("  python -m src.data_cleaning.harmonization.tam_es --build-csv   Build CSV from cache")
+        log.info("  python -m src.harmonization.tam_es --scrape      Full scrape (~1h)")
+        log.info("  python -m src.harmonization.tam_es --build-csv   Build CSV from cache")
         log.info("")
         log.info("  Progress is cached to external_enrichment/cache/bdns_v2/")
         log.info("  Uses pap.hacienda.gob.es (pageSize=1000, ~6.3K pages)")

@@ -1,6 +1,6 @@
 # Entity Matching Guide
 
-The generic matcher (`src/data_extraction/matching/generic_matcher.py`) accepts any company list and matches it against the master subsidy dataset. No sector-specific logic is hardcoded — all customisation is passed via configuration.
+The generic matcher (`src/matching/generic_matcher.py`) accepts any company list and matches it against the master subsidy dataset. No sector-specific logic is hardcoded — all customisation is passed via configuration.
 
 ## Company List Format
 
@@ -43,7 +43,7 @@ python run_pipeline.py --stage match \
 ### Via Python
 
 ```python
-from src.data_extraction.matching.generic_matcher import run_matching, MatchConfig
+from src.matching.generic_matcher import run_matching, MatchConfig
 
 match_log, summary = run_matching(
     master_csv=Path('data/processed/master_dataset.csv'),

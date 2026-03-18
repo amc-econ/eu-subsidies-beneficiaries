@@ -19,7 +19,7 @@ Outputs:
   output/highvalue_new_matches.csv    -- rows identified as likely matches
 
 Usage:
-  from src.data_extraction.enrichment.highvalue_forensics import run_highvalue_forensics
+  from src.enrichment.highvalue_forensics import run_highvalue_forensics
   run_highvalue_forensics('companies.csv', 'matched.csv')
 """
 

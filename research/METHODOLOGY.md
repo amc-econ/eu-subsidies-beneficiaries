@@ -230,16 +230,16 @@ The following overlaps are **not automatically resolved**:
 ```
 data/raw/                     Raw source files (unmodified)
     |
-    v  src/data_cleaning/harmonization/
+    v  src/harmonization/
 data/processed/               Standardized CSVs (36-col schema)
     |
-    v  src/data_cleaning/master/builder.py
+    v  src/master/builder.py
 data/processed/master_dataset.parquet    ~27M rows
     |
-    v  src/data_extraction/matching/generic_matcher.py
+    v  src/matching/generic_matcher.py
 data/processed/match_output/{run}/       match_log.csv
     |
-    v  src/data_extraction/matching/consolidation.py
+    v  src/matching/consolidation.py
 data/processed/match_output/{run}/       consolidated_matches.csv
                                          charts/
                                          T1–T8_summary_*.csv
