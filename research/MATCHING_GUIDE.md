@@ -85,6 +85,7 @@ class MatchConfig:
    - Pre-filtered by token inverted index (must share >= `token_overlap_min` significant tokens)
    - Pre-filtered by length ratio (must be within `length_ratio_max`)
    - Short names (<= 5 chars) require exact match only (avoids "BMW" matching "BNW")
+   - **Country consistency veto**: if the company list includes a `country` column and a `fuzzy_medium` candidate's country conflicts with the master row's country, the match is rejected. Exact and fuzzy_high matches are unaffected. This fires automatically when country data is present — no per-entity configuration required.
 
 ### Layer B: Contextual Text Matching
 
@@ -194,6 +195,7 @@ df_cofin  = df[df['dc_flag'].str.contains('cofinancing_overlap', na=False)]
 | `cofinancing_overlap:tam_rrf` | TAM row overlaps with an RRF recovery grant |
 | `confirmed_duplicate:ipcei_tam` | IPCEI state aid decision also notified as SA.XXXXX in TAM |
 | `consortium_partner_attribution` | FTS-CORDIS row attributed to a consortium member, not the direct beneficiary |
+| `same_record_multicountry` | Same source record (same ID + entity + amount + year) appears under multiple country codes — structural artifact of multi-country KOHESIO projects; all but the first occurrence are flagged |
 
 **What is not deduplicated**: EIB/EBRD loans alongside grants from TAM or other sources are kept as `dc_preferred=True` — loans are repayable and GGE conversion already applies lower rates (15–10% vs 100% for grants). Including both is correct.
 

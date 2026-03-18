@@ -594,6 +594,7 @@ def run_matching(
     ref_clean_list = sorted(ref_clean_set)
     exact_lookup = build_exact_lookup(ref_df, aliases)
     ref_clean_to_raw = dict(zip(ref_df['ref_name_clean'], ref_df['ref_name_raw']))
+    ref_clean_to_country = dict(zip(ref_df['ref_name_clean'], ref_df['ref_country'].fillna('').str.upper()))
 
     log.info(f"Reference: {len(ref_clean_set)} unique cleaned names, "
              f"{len(exact_lookup)} exact lookup entries (incl. aliases)")
@@ -651,7 +652,8 @@ def run_matching(
     # Pre-build Layer A lookup as a DataFrame for vectorised merge
     if name_results:
         la_df = pd.DataFrame([
-            {'_ec': k, '_ref_clean': v[0], '_score': v[1], '_mtype': v[2], '_notes': v[3]}
+            {'_ec': k, '_ref_clean': v[0], '_score': v[1], '_mtype': v[2], '_notes': v[3],
+             '_ref_country': ref_clean_to_country.get(v[0], '')}
             for k, v in name_results.items()
         ])
     else:
@@ -693,6 +695,29 @@ def run_matching(
             ).values
             chunk.loc[la_idx, col_ref_name] = ref_raws
             chunk.loc[la_idx, col_notes] = merged.loc[layer_a_mask.values, '_notes'].values
+
+        # --- Country consistency veto (fuzzy_medium only) ---
+        # If the reference company has a country and the master row has a country
+        # and they disagree, reject the fuzzy_medium match. Exact and fuzzy_high
+        # matches are confident enough to be kept regardless. This is a holistic
+        # structural filter — it applies automatically to any company list that
+        # includes a 'country' column; no per-entity config is needed.
+        if len(la_idx) > 0 and '_ref_country' in merged.columns:
+            ref_ctries = merged.loc[layer_a_mask.values, '_ref_country'].fillna('').str.upper().values
+            row_ctries = chunk.loc[la_idx, 'country'].fillna('').str.strip().str.upper().values
+            mtypes_arr = merged.loc[layer_a_mask.values, '_mtype'].values
+            country_veto = np.array([
+                mt == 'fuzzy_medium' and bool(rc) and bool(rc2) and rc != rc2
+                for mt, rc, rc2 in zip(mtypes_arr, ref_ctries, row_ctries)
+            ])
+            if country_veto.any():
+                veto_idx = la_idx[country_veto]
+                chunk.loc[veto_idx, col_flag] = False
+                chunk.loc[veto_idx, col_type] = 'none'
+                chunk.loc[veto_idx, col_score] = 0.0
+                chunk.loc[veto_idx, col_matched_on] = ''
+                chunk.loc[veto_idx, col_ref_name] = ''
+                chunk.loc[veto_idx, col_notes] = ''
 
         # --- False positive veto ---
         if len(la_idx) > 0 and config.beneficiary_fp_patterns:

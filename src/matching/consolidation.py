@@ -853,6 +853,50 @@ def _flag_ipcei_tam_overlap(df: pd.DataFrame, amount_tol: float = 0.20, year_win
     return df
 
 
+def _dedup_same_record_multicountry(df: pd.DataFrame) -> pd.DataFrame:
+    """Flag rows where the same source record appears under multiple countries.
+
+    Some sources (notably KOHESIO) represent multi-country projects once per
+    partner country — the same source_record_id + beneficiary + amount + year
+    combination appears with different country values. These are structural
+    duplicates: keep the first occurrence, mark the rest dc_preferred=False.
+
+    This is a holistic structural filter. It applies to any source and any
+    company list; no per-entity or per-source configuration is needed.
+    """
+    key = ['source_record_id', 'entity_name_clean', 'amount_eur', 'year']
+    available = [c for c in key if c in df.columns]
+    if len(available) < len(key):
+        return df
+    valid = df[available].notna().all(axis=1) & (df['amount_eur'] > 0)
+    dup_mask = df[valid].duplicated(subset=available, keep='first')
+    dup_idx = df[valid].index[dup_mask]
+    n = len(dup_idx)
+    if n > 0:
+        df.loc[dup_idx, 'dc_preferred'] = False
+        df.loc[dup_idx, 'dc_flag'] = df.loc[dup_idx, 'dc_flag'].map(
+            lambda x: (x + '|' if x else '') + 'same_record_multicountry'
+        )
+        log.info(f"  Multi-country dedup: {n} rows flagged (same record, multiple countries)")
+    return df
+
+
+def _dedup_exact_rows(df: pd.DataFrame, ref_col: str = 'match_reference_name') -> pd.DataFrame:
+    """Drop rows that are exact duplicates on all key identification fields.
+
+    Guards against consolidation producing identical output rows when the
+    same source record is processed twice (e.g. via two enrichment paths).
+    """
+    key = ['source', 'source_record_id', 'entity_name_clean', 'amount_eur', 'year', 'country', ref_col]
+    key = [c for c in key if c in df.columns]
+    before = len(df)
+    df = df.drop_duplicates(subset=key, keep='first').copy()
+    n = before - len(df)
+    if n > 0:
+        log.info(f"  Exact row dedup: removed {n} exact duplicate rows")
+    return df
+
+
 def _add_attribution_type(df: pd.DataFrame, prefix: str = 'match') -> pd.DataFrame:
     """Add attribution_type column classifying how each amount is linked to the entity.
 
@@ -991,6 +1035,7 @@ def consolidate(
     # Apply dedup logic (each function sets dc_preferred=False + dc_flag on affected rows)
     combined = _dedup_fts_identical_transactions(combined, prog_map)
     combined = _flag_cofinancing_overlaps(combined)
+    combined = _dedup_same_record_multicountry(combined)
     combined = _flag_ipcei_tam_overlap(combined)
     combined = _add_attribution_type(combined, prefix=prefix)
 
@@ -1118,6 +1163,7 @@ def consolidate(
     # Phase 8: Save outputs
     # ------------------------------------------------------------------
     log.info("\nPhase 8: Saving outputs...")
+    combined = _dedup_exact_rows(combined, ref_col=ref_col)
     combined.to_csv(output_dir / 'consolidated_matches.csv', index=False)
     log.info(f"  consolidated_matches.csv ({len(combined):,} rows)")
 
