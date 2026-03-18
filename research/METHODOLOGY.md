@@ -6,11 +6,11 @@ This analysis draws on 12 publicly available EU data sources, comprising approxi
 
 ### 1.1 Primary Sources
 
-**Transparency Award Module (TAM).** The European Commission's state aid transparency database, containing 2.1 million individual aid award decisions reported by Member States for the period 2000--2023. Records include beneficiary name, NACE sector classification, granting authority, aid instrument, and awarded amount in EUR. The raw file is tab-separated with latin-1 encoding. Compound NACE descriptions (semicolon-delimited) are split during harmonization.
+**Transparency Award Module (TAM).** The European Commission's state aid transparency database, containing 2.1 million individual aid award decisions reported by Member States for the period 2000--2023. Records include beneficiary name, NACE sector classification, granting authority, aid instrument, and awarded amount in EUR.
 
 **TAM National Supplements.** Four Member State portals provide granular award-level data not fully captured in the central TAM:
 
-- *Spain (BDNS)*: ~4.72 million rows from the Base de Datos Nacional de Subvenciones, retrieved via paginated API (pageSize=1000, ~6,300 pages). Cached locally for reproducibility.
+- *Spain (BDNS)*: ~4.72 million rows from the Base de Datos Nacional de Subvenciones, retrieved via paginated API.
 - *Poland (SUDOP)*: ~15.7 million rows from the System Udostępniania Danych o Pomocy Publicznej.
 - *Romania*: National state aid register supplement.
 - *Slovenia*: National state aid register supplement.
@@ -19,7 +19,7 @@ This analysis draws on 12 publicly available EU data sources, comprising approxi
 
 **Kohesio.** ~1.9 million EU Cohesion Policy project records from the Commission's unified cohesion data platform.
 
-**European Investment Bank (EIB).** ~26,000 loan and investment records. The raw dataset (EIB.xlsx) contains no native project identifiers; sequential row indices serve as `source_record_id`. Notably, the `beneficiary_name` field in this source contains the project title rather than the borrower's name, necessitating dedicated enrichment (Section 3).
+**European Investment Bank (EIB).** ~26,000 loan and investment records. The `beneficiary_name` field contains the project title rather than the borrower's name, necessitating dedicated enrichment (Section 3).
 
 **European Bank for Reconstruction and Development (EBRD).** ~6,000 project records. As with EIB, the beneficiary field contains project titles.
 
@@ -81,11 +81,11 @@ Two enrichment steps are applied before entity matching to improve beneficiary i
 
 ### 3.1 CORDIS Organization Join
 
-For RESEARCH-sourced records, a bulk join against the CORDIS organization dataset links project participation IDs to structured organization names and metadata. This achieves an 80.3% match rate for Horizon Europe/2020 projects. An API-based backfill (`cordis_api_backfill.py`) targets the remaining 10,754 unmatched projects, achieving partial coverage (41%).
+For RESEARCH-sourced records, a bulk join against the CORDIS organization dataset links project participation IDs to structured organization names and metadata, achieving an 80.3% match rate for Horizon Europe/2020 projects. An API-based backfill targets remaining unmatched projects.
 
 ### 3.2 EIB Promoter Scraping
 
-Since the EIB raw data lacks true beneficiary names, a sitemap-based scraper (`eib_promoter_scraper.py`) retrieves promoter information from 16,869 EIB project pages. Promoter data is extracted from the HTML structure (`eib-list__row--body` elements). Of the pages scraped, 9,353 (56%) contain usable promoter names, achieving a 98.2% title-to-record match rate against the harmonized EIB dataset.
+Since the EIB raw data lacks true beneficiary names, a sitemap-based scraper retrieves promoter information from EIB project pages. Of pages scraped, 56% contain usable promoter names, with a 98.2% title-to-record match rate against the harmonized EIB dataset.
 
 ---
 
@@ -150,11 +150,7 @@ Each match is assigned a confidence tier:
 
 ## 6. Group Consolidation
 
-Matched entities are rolled up to corporate group level using a curated `PARENT_GROUPS` dictionary that maps entity names to ultimate parent groups.
-
-- `_clean_for_group()` strips trailing legal suffixes only (preserving leading tokens such as "AB" in "AB Volvo").
-- `assign_parent_group()` applies longest-match-first logic to handle overlapping group names (e.g., "Volvo" vs. "Volvo Car" vs. "AB Volvo").
-- Major groups include Stellantis (28 matched entities), VW Group (33), Mercedes-Benz (8), and Renault (8).
+Matched entities are rolled up to corporate group level using a curated parent-groups dictionary. Legal suffixes are stripped before lookup; overlapping group names (e.g., "Volvo" vs. "Volvo Car" vs. "AB Volvo") are resolved by longest-match-first. In the automotive example, major groups include Stellantis (28 matched entities), VW Group (33), Mercedes-Benz (8), and Renault (8).
 
 ---
 
@@ -186,7 +182,28 @@ Rows identified as potential cross-source duplicates are flagged but not removed
 
 ### 8.3 Structural Audit
 
-A post-matching structural audit (`structural_audit.py`) generates a 7-section diagnostic covering source composition, match confidence distribution, group concentration (HHI, Gini, Top-5 share), and instrument mix.
+A post-matching structural audit generates a 7-section diagnostic covering source composition, match confidence distribution, group concentration (HHI, Gini, Top-5 share), and instrument mix.
+
+### 8.4 Structural Overlaps Resolved by Default
+
+The following overlaps are resolved at master dataset construction time:
+
+| Overlap | Resolution |
+|---------|-----------|
+| `SCOREBOARD` | Excluded — aggregated form of the same state aid data captured in TAM |
+| `ESIF` programme-level | Excluded — overlaps with Kohesio project-level records; Kohesio is preferred |
+| FTS rows flagged `research_programme_overlap` | Excluded when RESEARCH source is active |
+| Non-EU EIB/EBRD rows | Excluded by default |
+
+All exclusions are recorded in `exclude_reason` and visible in the master dataset.
+
+### 8.5 Residual Overlap Risks
+
+The following overlaps are **not automatically resolved**:
+
+- **RRF vs. TAM**: RRF records are planning-level allocations, not payment records. They are not deduplicated against TAM by design. If future TAM entries cover the same instruments, overlap is possible.
+- **Multi-source aggregation is not double-counting**: A beneficiary appearing in both Kohesio (cohesion grant) and EIB (loan) received two distinct instruments. Including both is correct. GGE conversion normalises cross-instrument comparison.
+- **Face value vs. GGE**: Face values should be treated as upper bounds on total support. Use GGE for cross-instrument and cross-source comparisons.
 
 ---
 
@@ -205,41 +222,6 @@ A post-matching structural audit (`structural_audit.py`) generates a 7-section d
 6. **TAM supplement completeness.** National supplements (Spain, Poland, Romania, Slovenia) improve coverage for those Member States but equivalent granular data is not available for all 27 EU members. Cross-country comparisons should account for this asymmetry.
 
 7. **Original column preservation.** For high-volume TAM supplements (Spain: 4.7M rows, Poland: 15.7M rows), original source columns are slimmed to 3--4 essential fields (measure ID, form code, NIF) to keep file sizes tractable. Full original metadata is available in the raw source files.
-
----
-
----
-
-## 10. Overlap, Double-Counting, and Deduplication
-
-### 10.1 Flag-Based Exclusion
-
-No rows are deleted from the master dataset. Every record carries two fields: `is_primary_record` (boolean) and `exclude_reason` (string). Headline totals always filter to `is_primary_record == True`. Exclusion decisions are transparent, auditable, and reversible — the full record is preserved.
-
-### 10.2 Structural Overlaps Resolved by Default
-
-The following overlaps are resolved at master dataset construction time via `MasterConfig` defaults:
-
-| Overlap | Resolution |
-|---------|-----------|
-| `SCOREBOARD` | Excluded — aggregated form of the same state aid data captured in TAM |
-| `ESIF` programme-level | Excluded — overlaps with Kohesio project-level records; Kohesio is preferred |
-| FTS rows flagged `research_programme_overlap` | Excluded when RESEARCH source is active |
-| Non-EU EIB/EBRD rows | Excluded by default (`eu27_only_loans`) |
-
-All exclusions are recorded in `exclude_reason` and visible in the master dataset.
-
-### 10.3 Post-Match Deduplication
-
-After the matching phase, enrichment outputs (FTS-CORDIS bridge, ETS, IPCEI, EIB promoter) are integrated against core match results using `source_record_id` deduplication. An enrichment row that duplicates a directly-matched record is dropped before consolidation. This is logged and auditable in `enrichment_stats.json`.
-
-### 10.4 Residual Risks
-
-The following overlaps are **not automatically resolved** and are disclosed here:
-
-- **RRF vs. TAM**: RRF records are planning-level allocations, not payment records. They are not deduplicated against TAM by design. If future TAM entries cover the same instruments, overlap is possible.
-- **Multi-source aggregation is not double-counting**: A beneficiary appearing in both Kohesio (cohesion grant) and EIB (loan) received two distinct instruments. Including both is correct. GGE conversion normalizes cross-instrument comparison.
-- **Face value vs. GGE**: Face values should be treated as upper bounds on total support. Use GGE for cross-instrument and cross-source comparisons.
 
 ---
 

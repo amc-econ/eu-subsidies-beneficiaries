@@ -52,9 +52,7 @@ REPO_ROOT = Path(__file__).resolve().parent
 
 def stage_harmonize() -> None:
     """Stage 1: Harmonize raw data sources into standardized CSVs."""
-    log.info("=" * 60)
-    log.info("STAGE 1: HARMONIZATION")
-    log.info("=" * 60)
+    log.info("Stage 1: Harmonization")
 
     from src.data_cleaning.harmonization.run_all import main as harmonize_main
     data_dir = REPO_ROOT / 'data' / 'raw'
@@ -65,9 +63,7 @@ def stage_harmonize() -> None:
 
 def stage_enrich() -> None:
     """Stage 2: Run pre-matching enrichments (CORDIS bulk join, EIB promoter)."""
-    log.info("=" * 60)
-    log.info("STAGE 2: PRE-MATCHING ENRICHMENT")
-    log.info("=" * 60)
+    log.info("Stage 2: Pre-matching enrichment")
 
     os.environ['SUBSIDIES_PROJECT_ROOT'] = str(REPO_ROOT)
 
@@ -88,9 +84,7 @@ def stage_enrich() -> None:
 
 def stage_master() -> None:
     """Stage 3: Build master dataset from standardized CSVs."""
-    log.info("=" * 60)
-    log.info("STAGE 3: MASTER DATASET")
-    log.info("=" * 60)
+    log.info("Stage 3: Master dataset build")
 
     from src.data_cleaning.master.builder import main as master_main
     output_dir = REPO_ROOT / 'data' / 'processed'
@@ -118,9 +112,7 @@ def stage_match(
         Pre-built MatchConfig (e.g., from automotive with Python FP patterns).
         If None, builds from config_json.
     """
-    log.info("=" * 60)
-    log.info("STAGE 4: ENTITY MATCHING + ENRICHMENT + CONSOLIDATION")
-    log.info("=" * 60)
+    log.info("Stage 4: Entity matching + enrichment + consolidation")
 
     from src.data_extraction.matching.generic_matcher import MatchConfig, run_matching
     from src.paths import master_dataset_path, ENRICHMENT_DIR
@@ -273,20 +265,12 @@ def stage_match(
     except Exception as e:
         log.warning(f"Chart generation skipped: {e}")
 
-    log.info("\n" + "=" * 60)
-    log.info("MATCHING PIPELINE COMPLETE")
-    log.info("=" * 60)
-    log.info(f"  Match results:      {match_log}")
-    log.info(f"  Consolidated CSV:   {out / 'consolidated_matches.csv'}")
-    log.info(f"  Group summary:      {out / 'group_summary.csv'}")
-    log.info(f"  Charts:             {out / 'charts'}")
+    log.info("Matching complete — results in %s", out)
 
 
 def stage_automotive() -> None:
-    """Stage 5: Run automotive worked example using the pre-built company list."""
-    log.info("=" * 60)
-    log.info("STAGE 5: AUTOMOTIVE EXAMPLE")
-    log.info("=" * 60)
+    """Stage 5: Run the automotive worked example using the pre-built company list."""
+    log.info("Stage 5: Automotive example")
 
     from examples.automotive.build_company_list import build_company_list
 

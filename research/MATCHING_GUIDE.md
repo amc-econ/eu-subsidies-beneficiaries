@@ -125,15 +125,15 @@ When you run `--stage match`, the pipeline automatically executes:
 
 ### Post-Match Enrichment
 
-Five enrichment scripts run automatically after matching, finding additional matches the fuzzy matcher missed:
+Five enrichment scripts run automatically after matching:
 
-| Script | What it does | How it helps |
-|--------|-------------|--------------|
-| FTS-CORDIS bridge | Extracts CORDIS grant IDs from FTS, joins to participant data | Finds research consortia partnerships |
-| EU ETS free allocation | Scans EU ETS installation data for company names | Identifies carbon allowance recipients |
-| IPCEI reference | Matches against IPCEI participant reference data | Catches IPCEI state aid (batteries, microelectronics, hydrogen) |
-| FTS deep mining | Text-mines FTS descriptions for company name mentions | Finds grants where company is mentioned but not the beneficiary |
-| High-value forensics | Audits top unmatched rows (>EUR 500K) | Identifies potential missed high-value matches |
+| Script | What it does |
+|--------|-------------|
+| FTS-CORDIS bridge | Extracts CORDIS grant IDs from FTS descriptions, joins to participant data |
+| EU ETS free allocation | Matches company names against EU ETS installation records |
+| IPCEI reference | Matches against IPCEI participant reference data (batteries, microelectronics, hydrogen) |
+| FTS deep mining | Text-mines FTS descriptions for company name mentions |
+| High-value forensics | Audits top unmatched rows (>EUR 500K) for potential missed matches |
 
 All enrichment scripts accept the company list dynamically — no sector-specific patterns are hardcoded.
 
@@ -189,20 +189,10 @@ Maps entity names to corporate groups for group-level analysis:
 }
 ```
 
-Member names should be lowercase. The algorithm uses longest-match-first to handle overlapping names (e.g., "volvo car" vs "ab volvo").
-
 ## Automotive Example
 
-The automotive example (`examples/automotive/`) demonstrates the full pipeline:
+See [`examples/automotive/`](../examples/automotive/) for a worked sector analysis.
 
 ```bash
 python run_pipeline.py --stage automotive
 ```
-
-This builds a company list from ORBIS (top 1,000 car companies) + EV volumes, runs matching with automotive-specific false-positive filters, consolidates with parent group rollup (60 corporate groups), and generates generic + sector-specific charts.
-
-Configuration files in `examples/automotive/config/` are templates for your own sector analysis:
-- `pipeline_config.json` — ties everything together
-- `parent_groups.json` — 60 corporate groups
-- `company_nationality.json` — origin classification
-- `sector_tags.json` — sector/subsector tags
