@@ -551,6 +551,19 @@ def generate_summary_charts(
         df['gge_eur'] = df['amount_eur']
         log.warning('  No GGE column or instrument class found — using face value as GGE proxy')
 
+    # Filter to dc_preferred rows for headline charts — excludes confirmed duplicates
+    # (FTS/INNOVFUND echoes, TAM/KOHESIO co-financing overlaps) and consortium
+    # partner attribution rows (FTS_CORDIS cordis_company). The full dataset is
+    # preserved in consolidated_matches.csv; charts default to the clean subset.
+    if 'dc_preferred' in df.columns:
+        n_all = len(df)
+        df['dc_preferred'] = df['dc_preferred'].map(
+            lambda v: str(v).strip().lower() not in ('false', '0', 'no')
+            if not isinstance(v, bool) else v
+        )
+        df = df[df['dc_preferred']].copy()
+        log.info(f'  dc_preferred filter: {len(df):,} / {n_all:,} rows used for charts')
+
     # Determine group column
     ref_col = f'{prefix}_reference_name'
     if ref_col not in df.columns:

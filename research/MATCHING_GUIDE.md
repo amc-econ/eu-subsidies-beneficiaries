@@ -13,7 +13,7 @@ Tesla Inc,US,manual
 CATL,,manual
 ```
 
-Only `company_name` is required. Additional columns are preserved in the output but not used by the matcher.
+Only `company_name` is required. Additional columns pass through to output unchanged.
 
 ## Aliases Format
 
@@ -27,7 +27,7 @@ Optionally supply a JSON file mapping canonical names to known aliases:
 }
 ```
 
-Aliases are added to the exact-match lookup -- if a beneficiary name exactly matches an alias, it's linked to the canonical company.
+Aliases are added to the exact-match lookup: a matching beneficiary name links to the canonical company.
 
 ## Running the Matcher
 
@@ -91,11 +91,11 @@ class MatchConfig:
 For sources with rich text fields (FTS descriptions, EIB project titles):
 - Builds a single regex from all reference names (>= 6 chars, minus blocklisted words)
 - Scans `description`, `original_columns`, and source-specific text fields
-- Matches are tagged `contextual_exact` with lower confidence
+- The matcher tags these `contextual_exact` with lower confidence
 
 ### Layer B+: Title Extraction (EIB/EBRD)
 
-For EIB and EBRD rows where `beneficiary_name` is actually the project title:
+For EIB and EBRD rows where `beneficiary_name` is the project title:
 - Extracts potential company names from the title text
 - Matches extracted names against the reference list
 

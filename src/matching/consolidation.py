@@ -649,6 +649,248 @@ def build_concentration_metrics(df, col):
 
 
 # ============================================================================
+# PHASE 2b: CROSS-SOURCE DEDUPLICATION HELPERS
+# ============================================================================
+
+def _load_programme_map(match_log_path: Path) -> dict:
+    """Load programme + fund from enriched.csv co-located with match_log.csv.
+
+    Returns {source_record_id_str: (programme, fund)} dict.
+    """
+    enriched = Path(match_log_path).parent / 'enriched.csv'
+    if not enriched.exists():
+        return {}
+    peek = pd.read_csv(enriched, nrows=0)
+    cols = [c for c in ['source_record_id', 'programme', 'fund'] if c in peek.columns]
+    if 'source_record_id' not in cols:
+        return {}
+    df = pd.read_csv(enriched, usecols=cols, low_memory=False)
+    progs = df.get('programme', pd.Series([''] * len(df)))
+    funds = df.get('fund', pd.Series([''] * len(df)))
+    return {
+        str(sid): (str(prog or ''), str(fund or ''))
+        for sid, prog, fund in zip(df['source_record_id'], progs, funds)
+    }
+
+
+def _dedup_fts_identical_transactions(df: pd.DataFrame, prog_map: dict) -> pd.DataFrame:
+    """Set dc_preferred=False for FTS rows that are confirmed echoes of INNOVFUND or CINEA.
+
+    FTS captures budget payment outflows — the same Innovation Fund or CINEA-managed
+    grant appears in both FTS (as a payment line) and the authoritative award database
+    (INNOVFUND or CINEA). The authoritative row is kept (dc_preferred=True); the FTS
+    echo is flagged (dc_preferred=False).
+
+    Amount tolerance: ≤ 0.1% (same grant to the cent; year may differ by 1-2 years).
+    FTS/CINEA: shared project ID is definitive; amount check not applied.
+
+    Does NOT remove rows — preserves all data for research.
+    """
+    IF_KW = ['innovation fund', 'o.0.1']
+    CINEA_KW = ['connecting europe', 'cef', 'life', 'environment and climate action',
+                'emfaf', 'maritime, fisheries']
+
+    fts_mask = df['source'] == 'FTS'
+    if not fts_mask.any():
+        return df
+
+    # Map programme to each FTS row
+    fts_idx = df.index[fts_mask]
+    fts_prog = df.loc[fts_idx, 'source_record_id'].astype(str).map(
+        lambda sid: prog_map.get(sid, ('', ''))[0].lower()
+    )
+
+    # --- FTS / INNOVFUND (amount match ≤ 0.1%) ---
+    if_mask_local = fts_prog.map(lambda p: any(kw in p for kw in IF_KW))
+    if_fts_idx = fts_idx[if_mask_local]
+    if len(if_fts_idx) > 0:
+        innov = df[df['source'] == 'INNOVFUND'][['match_reference_name', 'source_record_id', 'amount_eur']]
+        for idx in if_fts_idx:
+            row = df.loc[idx]
+            matches = innov[innov['match_reference_name'] == row['match_reference_name']]
+            for _, innov_row in matches.iterrows():
+                try:
+                    a = float(row['amount_eur'])
+                    b = float(innov_row['amount_eur'])
+                except (ValueError, TypeError):
+                    continue
+                if max(abs(a), abs(b)) == 0:
+                    continue
+                if abs(a - b) / max(abs(a), abs(b)) <= 0.001:
+                    df.at[idx, 'dc_preferred'] = False
+                    existing = df.at[idx, 'dc_flag']
+                    df.at[idx, 'dc_flag'] = (existing + '|' if existing else '') + 'confirmed_duplicate:fts_innovfund'
+                    df.at[idx, 'cofinancing_partner_id'] = str(innov_row['source_record_id'])
+                    break
+
+    # --- FTS / CINEA (shared project ID = definitive) ---
+    cinea_mask_local = fts_prog.map(lambda p: any(kw in p for kw in CINEA_KW))
+    cinea_fts_idx = fts_idx[cinea_mask_local]
+    if len(cinea_fts_idx) > 0:
+        cinea_ids = set(df.loc[df['source'] == 'CINEA', 'source_record_id'].astype(str))
+        fts_shared = df.loc[cinea_fts_idx, 'source_record_id'].astype(str)
+        drop_local = fts_shared[fts_shared.isin(cinea_ids)].index
+        for idx in drop_local:
+            df.at[idx, 'dc_preferred'] = False
+            existing = df.at[idx, 'dc_flag']
+            df.at[idx, 'dc_flag'] = (existing + '|' if existing else '') + 'confirmed_duplicate:fts_cinea'
+
+    return df
+
+
+def _flag_cofinancing_overlaps(df: pd.DataFrame, year_win: int = 2) -> pd.DataFrame:
+    """Flag TAM rows where a KOHESIO or RRF record exists for the same entity+country.
+
+    TAM = total approved national state aid (EU co-financing + national share).
+    KOHESIO = EU co-financing share only (typically 50-85% of total investment).
+    These are structurally different views of the same underlying investment.
+
+    Amount check: ratio KOHESIO/TAM must be in [0.01, 1.50] — not a traditional
+    tolerance but a plausibility check (KOHESIO is always a fraction of TAM, but
+    multi-year KOHESIO disbursements can exceed a single annual TAM commitment).
+
+    TAM rows are marked dc_preferred=False; KOHESIO/RRF rows stay dc_preferred=True.
+    """
+    join_cols = ['match_reference_name', 'country']
+    tam = df[df['source'] == 'TAM'][join_cols + ['source_record_id', 'year', 'amount_eur']].copy()
+    if tam.empty:
+        return df
+
+    for preferred_src in ['KOHESIO', 'RRF']:
+        other = df[df['source'] == preferred_src][join_cols + ['source_record_id', 'year', 'amount_eur']].copy()
+        if other.empty:
+            continue
+        merged = tam.merge(other, on=join_cols, suffixes=('_tam', '_other'))
+        if merged.empty:
+            continue
+
+        # Year filter
+        y_t = pd.to_numeric(merged['year_tam'], errors='coerce')
+        y_o = pd.to_numeric(merged['year_other'], errors='coerce')
+        both_known = y_t.notna() & y_o.notna()
+        merged = merged[~(both_known & ((y_t - y_o).abs() > year_win))].copy()
+        if merged.empty:
+            continue
+
+        # Plausibility ratio check — KOHESIO should be 1–150% of TAM
+        a = pd.to_numeric(merged['amount_eur_tam'], errors='coerce')
+        b = pd.to_numeric(merged['amount_eur_other'], errors='coerce')
+        valid = a.notna() & b.notna() & (a > 0) & (b > 0)
+        ratio = (b / a).where(valid)
+        plausible = valid & (ratio >= 0.01) & (ratio <= 1.50)
+        merged = merged[plausible].copy()
+        if merged.empty:
+            continue
+
+        tam_ids = set(merged['source_record_id_tam'].astype(str))
+        id_map = dict(zip(
+            merged['source_record_id_tam'].astype(str),
+            merged['source_record_id_other'].astype(str),
+        ))
+        flag_str = f'cofinancing_overlap:tam_{preferred_src.lower()}'
+        mask = (df['source'] == 'TAM') & df['source_record_id'].astype(str).isin(tam_ids)
+        df.loc[mask, 'dc_preferred'] = False
+        df.loc[mask, 'dc_flag'] = df.loc[mask, 'dc_flag'].map(
+            lambda x: (x + '|' if x else '') + flag_str
+        )
+        df.loc[mask, 'cofinancing_partner_id'] = (
+            df.loc[mask, 'source_record_id'].astype(str).map(id_map)
+        )
+
+    return df
+
+
+def _flag_ipcei_tam_overlap(df: pd.DataFrame, amount_tol: float = 0.20, year_win: int = 2) -> pd.DataFrame:
+    """Flag TAM rows that correspond to IPCEI state aid decisions.
+
+    IPCEI (Important Projects of Common European Interest) state aid is notified
+    to the EC individually (SA.xxxxx) AND appears in the IPCEI reference database.
+    Both databases thus capture the same state aid decision. The IPCEI_state_aid
+    row is authoritative (project-level context); the TAM row is the national
+    notification echo.
+
+    Amount tolerance: ≤ 20% — IPCEI estimated amounts at EC approval may differ
+    from notified SA amounts in TAM. Year window ±2 years.
+    """
+    ipcei = df[df['source'] == 'IPCEI_state_aid']
+    tam = df[df['source'] == 'TAM']
+    if ipcei.empty or tam.empty:
+        return df
+
+    joined = ipcei.merge(
+        tam, on=['match_reference_name', 'country'],
+        suffixes=('_ipcei', '_tam'), how='inner',
+    )
+    if joined.empty:
+        return df
+
+    # Year filter
+    y_i = pd.to_numeric(joined['year_ipcei'], errors='coerce')
+    y_t = pd.to_numeric(joined['year_tam'], errors='coerce')
+    both = y_i.notna() & y_t.notna()
+    joined = joined[~(both & ((y_i - y_t).abs() > year_win))].copy()
+
+    # Amount filter
+    a = pd.to_numeric(joined['amount_eur_ipcei'], errors='coerce')
+    b = pd.to_numeric(joined['amount_eur_tam'], errors='coerce')
+    valid = a.notna() & b.notna() & (a > 0) & (b > 0)
+    joined = joined[valid].copy()
+    if joined.empty:
+        return df
+
+    denom = joined['amount_eur_ipcei'].combine(joined['amount_eur_tam'], lambda x, y: max(abs(x), abs(y)))
+    diff = (joined['amount_eur_ipcei'] - joined['amount_eur_tam']).abs() / denom
+    joined = joined[diff <= amount_tol].copy()
+    if joined.empty:
+        return df
+
+    tam_ids = set(joined['source_record_id_tam'].astype(str))
+    mask = (df['source'] == 'TAM') & df['source_record_id'].astype(str).isin(tam_ids)
+    df.loc[mask, 'dc_preferred'] = False
+    df.loc[mask, 'dc_flag'] = df.loc[mask, 'dc_flag'].map(
+        lambda x: (x + '|' if x else '') + 'confirmed_duplicate:ipcei_tam'
+    )
+    return df
+
+
+def _add_attribution_type(df: pd.DataFrame, prefix: str = 'match') -> pd.DataFrame:
+    """Add attribution_type column classifying how each amount is linked to the entity.
+
+    Values:
+      direct            — entity received or is accountable for the amount
+      consortium_partner — FTS_CORDIS row where the matched entity is NOT the
+                           beneficiary but a consortium partner; amount is attributed
+                           to the matched entity only because it triggered the match
+      contextual        — matched via description/topic keyword, not entity name
+      inferred          — matched via EIB title or other indirect signal
+
+    Consortium partner rows are set dc_preferred=False — they inflate totals.
+    """
+    type_col = f'{prefix}_type'
+    df['attribution_type'] = 'direct'
+
+    if type_col in df.columns:
+        mtype = df[type_col].fillna('')
+        df.loc[(df['source'] == 'FTS_CORDIS') & mtype.str.contains('cordis_company', na=False),
+               'attribution_type'] = 'consortium_partner'
+        df.loc[(df['source'] == 'FTS_CORDIS') & mtype.str.contains('topic_keyword', na=False),
+               'attribution_type'] = 'contextual'
+
+    if 'match_type' in df.columns:
+        df.loc[df['match_type'].str.contains('contextual|topic_only', case=False, na=False),
+               'attribution_type'] = 'contextual'
+        df.loc[df['match_type'].str.contains('eib_title|inferred', case=False, na=False),
+               'attribution_type'] = 'inferred'
+
+    cp_mask = df['attribution_type'] == 'consortium_partner'
+    df.loc[cp_mask, 'dc_preferred'] = False
+    df.loc[cp_mask, 'dc_flag'] = df.loc[cp_mask, 'dc_flag'].map(
+        lambda x: (x + '|' if x else '') + 'consortium_partner_attribution'
+    )
+    return df
+
+
+# ============================================================================
 # MAIN CONSOLIDATION ENTRY POINT
 # ============================================================================
 
@@ -717,6 +959,48 @@ def consolidate(
         core, enrichment_dir, prefix=prefix,
         company_list_csv=company_list_csv, aliases_json=aliases_json,
     )
+
+    # ------------------------------------------------------------------
+    # Phase 2b: Reference name normalisation + cross-source dedup
+    # ------------------------------------------------------------------
+    log.info("\nPhase 2b: Reference name normalisation & cross-source dedup...")
+
+    # Normalise match_reference_name to consistent upper-case so chart groupby
+    # operations are not split by capitalisation differences in the input CSV
+    # (e.g. "UMICORE" vs "Umicore" from different alias rows).
+    if ref_col in combined.columns:
+        combined[ref_col] = combined[ref_col].str.strip().str.upper()
+
+    # Initialise dedup columns
+    combined['dc_flag'] = ''
+    combined['dc_preferred'] = True
+    combined['attribution_type'] = 'direct'
+    combined['cofinancing_partner_id'] = ''
+
+    # Attach programme + fund from enriched.csv (dropped during standard consolidation)
+    prog_map = _load_programme_map(match_log_csv)
+    n_mapped = sum(1 for v in prog_map.values() if v[0])
+    log.info(f"  Programme map: {n_mapped:,} rows with programme info")
+    combined['programme'] = combined['source_record_id'].astype(str).map(
+        lambda sid: prog_map.get(sid, ('', ''))[0]
+    ).fillna('')
+    combined['fund'] = combined['source_record_id'].astype(str).map(
+        lambda sid: prog_map.get(sid, ('', ''))[1]
+    ).fillna('')
+
+    # Apply dedup logic (each function sets dc_preferred=False + dc_flag on affected rows)
+    combined = _dedup_fts_identical_transactions(combined, prog_map)
+    combined = _flag_cofinancing_overlaps(combined)
+    combined = _flag_ipcei_tam_overlap(combined)
+    combined = _add_attribution_type(combined, prefix=prefix)
+
+    n_not_preferred = (~combined['dc_preferred']).sum()
+    n_flagged = (combined['dc_flag'] != '').sum()
+    eur_preferred = combined.loc[combined['dc_preferred'], 'amount_eur'].sum()
+    log.info(f"  dc_preferred=False: {n_not_preferred:,} rows "
+             f"({n_not_preferred / len(combined) * 100:.1f}%)")
+    log.info(f"  dc_flag set:        {n_flagged:,} rows")
+    log.info(f"  EUR in preferred rows: {eur_preferred:,.0f}")
 
     # ------------------------------------------------------------------
     # Phase 3: Match quality assessment

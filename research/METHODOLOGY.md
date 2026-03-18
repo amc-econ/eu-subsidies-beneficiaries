@@ -44,7 +44,7 @@ The following are used in the automotive worked example (`examples/automotive/`)
 
 ## 2. Harmonization
 
-All 12 sources are standardized to a canonical 36-column schema (Schema v2) via source-specific harmonization modules orchestrated by `harmonize_all.py`. The schema covers entity resolution, flow taxonomy, fiscal classification, and flag-based exclusions.
+Source-specific harmonization modules (`harmonize_all.py`) standardize all 12 sources to a canonical 36-column schema (Schema v2). The schema covers entity resolution, flow taxonomy, fiscal classification, and flag-based exclusions.
 
 ### 2.1 Entity Name Cleaning
 
@@ -105,7 +105,7 @@ Since the EIB raw data lacks true beneficiary names, a sitemap-based scraper ret
 
 ## 4. Master Dataset Construction
 
-The master dataset is assembled by `master_builder.py`, which:
+`master_builder.py` assembles the master dataset by:
 
 1. Concatenates all standardized source files from the harmonization output directory.
 2. Applies `MasterConfig` flag-based exclusions.
@@ -142,7 +142,7 @@ Rather than matching all ~27 million rows individually, the pipeline extracts ~9
 
 A `match_quality` flag distinguishes contextual matches from name-based matches, as description-field matching carries higher false positive risk (e.g., "Samsung tablet" matching Samsung SDI, "Michelin star" matching Michelin).
 
-**EIB/EBRD title extraction (Layer B+).** Since EIB and EBRD records use project titles as beneficiary names, a dedicated extraction step parses company names from title strings using domain-specific patterns.
+**EIB/EBRD title extraction (Layer B+).** Since EIB and EBRD records use project titles as beneficiary names, the matcher parses company names directly from title strings.
 
 ### 5.4 Confidence Classification
 
@@ -164,13 +164,13 @@ Each match is assigned a confidence tier:
 
 ## 6. Group Consolidation
 
-Matched entities are rolled up to corporate group level using a curated parent-groups dictionary. Legal suffixes are stripped before lookup; overlapping group names (e.g., "Volvo" vs. "Volvo Car" vs. "AB Volvo") are resolved by longest-match-first.
+`consolidation.py` rolls matched entities to corporate group level via a curated parent-groups dictionary. Legal suffixes are stripped before lookup; overlapping group names (e.g., "Volvo" vs. "Volvo Car" vs. "AB Volvo") resolve by longest-match-first.
 
 ---
 
 ## 7. Gross Grant Equivalent (GGE)
 
-To enable cross-instrument comparison, face values are converted to Gross Grant Equivalent using conversion rates derived from the EU State Aid Scoreboard methodology:
+Face values convert to Gross Grant Equivalent (GGE) using EU State Aid Scoreboard rates:
 
 | Instrument | GGE Rate |
 |-----------|----------|
@@ -179,8 +179,6 @@ To enable cross-instrument comparison, face values are converted to Gross Grant 
 | Guarantees | 10% |
 | Equity participations | 100% |
 | Tax advantages | 15% |
-
-GGE values represent the estimated subsidy content of each instrument and are reported alongside face values throughout the analysis.
 
 ---
 

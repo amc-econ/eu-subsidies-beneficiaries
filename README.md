@@ -113,7 +113,7 @@ python run_pipeline.py --stage match \
     --config my_config.json
 ```
 
-See [research/MATCHING_GUIDE.md](research/MATCHING_GUIDE.md) for full details on config options and matching methodology. See [research/METHODOLOGY.md](research/METHODOLOGY.md) for data source documentation.
+Full details: [research/MATCHING_GUIDE.md](research/MATCHING_GUIDE.md) (config and matching), [research/METHODOLOGY.md](research/METHODOLOGY.md) (data sources).
 
 ---
 
@@ -210,4 +210,4 @@ data/processed/                  [3] MASTER BUILD
 - Python >= 3.10
 - `pip install -r requirements.txt`
 - Core: pandas, numpy, rapidfuzz, pyarrow, openpyxl, requests
-- Charts: matplotlib, seaborn, plotly, kaleido (optional). If missing, chart generation is silently skipped. Install with `pip install plotly kaleido matplotlib seaborn`.
+- Charts: matplotlib, seaborn, plotly, kaleido (optional). Charts generate only if installed: `pip install plotly kaleido matplotlib seaborn`.

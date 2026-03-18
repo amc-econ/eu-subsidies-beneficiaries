@@ -12,8 +12,12 @@ Coverage:       Programmes: INNOVFUND, CEF, LIFE, RENEWFM, EMFAF, JTM-PSLF, HORI
 CRITICAL INCLUSION RULES — DO NOT MODIFY:
     1. HORIZON is EXCLUDED: HORIZON funding is already captured in RESEARCH (CORDIS)
        and partially in FTS. Including it here would double-count.
-    2. INNOVFUND is FULLY ADDITIVE: funded from EU ETS carbon auction revenues,
-       NOT from the EU budget. It does NOT appear in FTS. Treat as genuinely new.
+    2. INNOVFUND is funded from EU ETS carbon auction revenues, NOT directly from the EU
+       budget. HOWEVER: FTS also captures Innovation Fund payment outflows under programme
+       code 'O.0.1 - Innovation Fund (IF)'. These FTS rows duplicate INNOVFUND award records.
+       The consolidation pipeline (Phase 2b in consolidation.py) sets dc_preferred=False on
+       the FTS duplicate and retains the INNOVFUND row as the authoritative source.
+       INNOVFUND rows are always dc_preferred=True.
     3. CEF, LIFE, EMFAF, RENEWFM: potentially overlap with FTS. Flagged
        'possible_fts_overlap'. Overlap check performed in check_cinea_fts_overlap().
     4. Aggregate 'TOTALS' rows are excluded to prevent double-counting.

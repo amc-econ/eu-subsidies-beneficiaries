@@ -203,6 +203,10 @@ TRIVIAL_TOKENS = frozenset({
     # French/Spanish/Portuguese legal
     'societe', 'anonyme', 'responsabilite', 'limitee',
     'sociedad', 'anonima', 'responsabilidad',
+    # Portuguese/Spanish sole-member forms
+    'unipessoal', 'lda', 'unipersonal',
+    # Polish sp. z o.o.
+    'zoo',
     # Generic industry words
     'systems', 'technology', 'technologies', 'engineering',
     'services', 'solutions', 'components', 'parts',
@@ -244,6 +248,13 @@ _LEGAL_SUFFIXES = [
     r'aps', r'a/s',
     r'srl', r'spa', r'nv', r'bv',
     r's\sp\sa', r's\sr\sl', r's\sr\so', r'b\sv', r'n\sv',
+    # Portuguese legal forms (unipessoal lda = sole-member limited liability)
+    r'unipessoal\s+lda', r'unipessoal',
+    r'lda',               # Portuguese Limitada
+    r'unipersonal',       # Spanish equivalent
+    r'societa\s+unipersonale',  # Italian equivalent
+    # Polish sp. z o.o. abbreviation
+    r'zoo',
 ]
 _LEGAL_SUFFIX_RE = re.compile(
     r'\b(?:' + '|'.join(_LEGAL_SUFFIXES) + r')\b\.?',
