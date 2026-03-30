@@ -738,6 +738,86 @@ def _dedup_fts_identical_transactions(df: pd.DataFrame, prog_map: dict) -> pd.Da
     return df
 
 
+# ---------------------------------------------------------------------------
+# Fund alias mapping — shared by _flag_cofinancing_overlaps and
+# _flag_pdf_cofin_overlaps.  Keys = canonical acronyms (matching sa_cofin_fund
+# values produced by sa_pdf_parser).  Values = lowercase substrings that may
+# appear in any source's 'fund' column.
+#
+# Coverage: expanded 2026-03-25 to include every EU funding instrument observed
+# in the consolidated output's 'fund' column across all sources (FTS, KOHESIO,
+# CINEA, INNOVFUND, etc.).  Administrative budget lines (buildings, equipment,
+# publications office) are intentionally excluded — they are not EU funding
+# programmes and would create false positives.
+#
+# National-language variants still partially missing (future work):
+#   ERDF: Italian 'fesr', Polish 'efrr', Romanian 'fedr'
+#   ESF: Czech 'esf', Hungarian 'esza'
+#   JTF: French 'ftr', Polish 'fundusz sprawiedliwej transformacji'
+#   See research/DEDUP_NOTES.md for the full backlog.
+# ---------------------------------------------------------------------------
+_FUND_ALIASES: dict[str, set] = {
+    # --- Cohesion / structural funds ---
+    'ERDF':       {'erdf', 'feder', 'efre', 'fesr', 'efrr',
+                   'european regional development'},
+    'ESF':        {'esf', 'esf+', 'esf plus', 'fse',
+                   'european social fund', 'youth employment initiative'},
+    'CF':         {'cohesion fund', 'fonds de cohesion', 'fonds de cohésion',
+                   'koh\u00e4sionsfonds'},
+    'JTF':        {'jtf', 'just transition'},
+    'ESIF':       {'esif', 'structural and investment', 'structural funds'},
+    'INTERREG':   {'interreg'},
+
+    # --- Recovery / resilience ---
+    'RRF':        {'rrf', 'recovery and resilience'},
+
+    # --- Agriculture / rural ---
+    'EAFRD':      {'eafrd', 'feader'},
+    'EAGF':       {'eagf', 'feaga'},
+    'EMFAF':      {'emfaf', 'european maritime, fisheries and aquaculture',
+                   'maritime, fisheries'},
+
+    # --- Research / innovation ---
+    'HORIZON':    {'horizon 2020', 'horizon europe', 'h2020',
+                   'research framework programme', 'euratom',
+                   'nuclear fission', 'joint research centre',
+                   'research programme for coal', 'research programme for steel'},
+    'EIC':        {'european innovation council', 'eic'},
+    'INNOVFUND':  {'innovation fund', 'innovfund', 'innovation fund (if)'},
+
+    # --- Transport / infrastructure / environment ---
+    'CEF':        {'connecting europe facility', 'cef',
+                   'trans-european networks', 'trans-european transport'},
+    'LIFE':       {'life+', 'programme for the environment and climate action',
+                   'environment and climate action',
+                   'completion of previous programmes in the field of environment'},
+
+    # --- Competitiveness / digital / skills ---
+    'ERASMUS':    {'erasmus+', 'erasmus plus', 'lifelong learning programme',
+                   'promoting learning mobility'},
+    'COSME':      {'cosme', 'competitiveness and innovation framework',
+                   'entrepreneurship and innovation programme'},
+    'DEP':        {'digital europe programme', 'dep',
+                   'european cybersecurity', 'artificial intelligence'},
+    'SKILLS':     {'skills'},
+
+    # --- External / neighbourhood ---
+    'ENI':        {'european neighbourhood', 'neighbourhood instrument',
+                   'neighbourhood and partnership'},
+    'IPA':        {'ipa', 'pre-accession', 'candidate countries', 'cards'},
+
+    # --- Defence / security ---
+    'EDIDP':      {'edidp', 'european defence industrial development',
+                   'defence industrial reinforcement', 'defence research',
+                   'military mobility'},
+
+    # --- Humanitarian / crisis ---
+    'UCPM':       {'union civil protection mechanism', 'humanitarian aid',
+                   'instrument for stability', 'crisis response'},
+}
+
+
+
 def _flag_cofinancing_overlaps(df: pd.DataFrame, year_win: int = 2) -> pd.DataFrame:
     """Flag TAM rows where a KOHESIO or RRF record exists for the same entity+country.
 
@@ -749,15 +829,38 @@ def _flag_cofinancing_overlaps(df: pd.DataFrame, year_win: int = 2) -> pd.DataFr
     tolerance but a plausibility check (KOHESIO is always a fraction of TAM, but
     multi-year KOHESIO disbursements can exceed a single annual TAM commitment).
 
+    Fund check (KOHESIO only): if the KOHESIO row has a non-empty 'fund' column,
+    we require that fund to match one of the known EU structural fund aliases in
+    _FUND_ALIASES. This prevents false positives where two unrelated records from
+    different programmes happen to share a beneficiary name and a plausible amount
+    ratio. If the KOHESIO 'fund' column is empty, the amount-ratio check alone is
+    used (conservative: do not discard uncertain cases).
+
     TAM rows are marked dc_preferred=False; KOHESIO/RRF rows stay dc_preferred=True.
     """
+    # Flat set of all known structural fund substrings (lowercase) from _FUND_ALIASES
+    _known_fund_aliases: set = {alias for aliases in _FUND_ALIASES.values() for alias in aliases}
+
+    def _kohesio_fund_is_structural(fund_val) -> bool:
+        """Return True if fund_val is empty (unknown) or matches a known EU structural fund."""
+        s = str(fund_val or '').lower().strip()
+        if not s:
+            return True  # no fund info — do not discard on this basis
+        return any(alias in s for alias in _known_fund_aliases)
+
     join_cols = ['match_reference_name', 'country']
+    if 'match_reference_name' not in df.columns:
+        return df
     tam = df[df['source'] == 'TAM'][join_cols + ['source_record_id', 'year', 'amount_eur']].copy()
     if tam.empty:
         return df
 
     for preferred_src in ['KOHESIO', 'RRF']:
-        other = df[df['source'] == preferred_src][join_cols + ['source_record_id', 'year', 'amount_eur']].copy()
+        src_cols = join_cols + ['source_record_id', 'year', 'amount_eur']
+        # Include 'fund' column for KOHESIO if available — used for structural-fund filter
+        if preferred_src == 'KOHESIO' and 'fund' in df.columns:
+            src_cols = src_cols + ['fund']
+        other = df[df['source'] == preferred_src][src_cols].copy()
         if other.empty:
             continue
         merged = tam.merge(other, on=join_cols, suffixes=('_tam', '_other'))
@@ -779,6 +882,14 @@ def _flag_cofinancing_overlaps(df: pd.DataFrame, year_win: int = 2) -> pd.DataFr
         ratio = (b / a).where(valid)
         plausible = valid & (ratio >= 0.01) & (ratio <= 1.50)
         merged = merged[plausible].copy()
+        if merged.empty:
+            continue
+
+        # Fund filter (KOHESIO only): drop pairs where KOHESIO fund is non-empty
+        # but does not match any known EU structural fund.
+        if preferred_src == 'KOHESIO' and 'fund' in merged.columns:
+            fund_ok = merged['fund'].map(_kohesio_fund_is_structural)
+            merged = merged[fund_ok].copy()
         if merged.empty:
             continue
 
@@ -934,6 +1045,114 @@ def _add_attribution_type(df: pd.DataFrame, prefix: str = 'match') -> pd.DataFra
     return df
 
 
+def _flag_pdf_cofin_overlaps(df: pd.DataFrame, year_win: int = 2) -> pd.DataFrame:
+    """Flag TAM rows as double-counting where PDF evidence confirms EU fund co-financing
+    AND another EU fund source row exists for the same beneficiary+country+year.
+
+    Generalized: searches ALL non-TAM sources (KOHESIO, RRF, FTS, CINEA, ESIF_2014,
+    ESIF_2027, etc.), not just KOHESIO. This reflects the reality that state aid can
+    be co-financed by any EU fund, and we have a 'fund' column for all sources.
+
+    Produces per-source flags: cofinancing_overlap:tam_<source_lower>_pdf
+    e.g. cofinancing_overlap:tam_kohesio_pdf, cofinancing_overlap:tam_fts_pdf
+
+    Requires sa_cofin_fund / sa_cofin_level columns added by SACofinParser.enrich_dataframe().
+    If those columns are absent (enrichment not run), returns df unchanged — safe no-op.
+
+    Only fires when sa_cofin_level == 'confirmed'. 'conditional' is ignored.
+    Fund match logic: if the other source's 'fund' column is empty, trust the PDF alone.
+    If non-empty, require the fund to match a canonical alias in _FUND_ALIASES.
+    """
+    if 'sa_cofin_fund' not in df.columns or 'sa_cofin_level' not in df.columns:
+        return df
+    if 'match_reference_name' not in df.columns:
+        return df
+
+    join_cols = ['match_reference_name', 'country']
+
+    tam_confirmed = df[
+        (df['source'] == 'TAM')
+        & (df['sa_cofin_level'] == 'confirmed')
+        & (df['sa_cofin_fund'].fillna('') != '')
+    ][join_cols + ['source_record_id', 'year', 'sa_cofin_fund']].copy()
+    if tam_confirmed.empty:
+        return df
+
+    fund_col_present = 'fund' in df.columns
+    other_cols = join_cols + ['source', 'source_record_id', 'year']
+    if fund_col_present:
+        other_cols = other_cols + ['fund']
+
+    non_tam = df[df['source'] != 'TAM'][other_cols].copy()
+    if non_tam.empty:
+        return df
+
+    merged = tam_confirmed.merge(
+        non_tam,
+        on=join_cols,
+        suffixes=('_tam', '_other'),
+    )
+    if merged.empty:
+        return df
+
+    # Year filter: keep pairs where both years unknown OR within year_win
+    y_t = pd.to_numeric(merged['year_tam'], errors='coerce')
+    y_o = pd.to_numeric(merged['year_other'], errors='coerce')
+    both_known = y_t.notna() & y_o.notna()
+    merged = merged[~(both_known & ((y_t - y_o).abs() > year_win))].copy()
+    if merged.empty:
+        return df
+
+    # Fund match: empty fund on other side → trust PDF; non-empty → match via _FUND_ALIASES
+    def _funds_match(row) -> bool:
+        other_fund = str(row.get('fund', '') or '').lower().strip()
+        if not other_fund:
+            return True  # no fund column data — PDF evidence is sufficient
+        tam_funds = {
+            f.strip().upper()
+            for f in str(row.get('sa_cofin_fund', '') or '').split(',')
+            if f.strip()
+        }
+        for canonical in tam_funds:
+            aliases = _FUND_ALIASES.get(canonical, {canonical.lower()})
+            if any(alias in other_fund for alias in aliases):
+                return True
+        return False
+
+    keep = merged.apply(_funds_match, axis=1)
+    merged = merged[keep].copy()
+    if merged.empty:
+        return df
+
+    # Ensure dc_flag is string (guard against NaN when loading from CSV)
+    df['dc_flag'] = df['dc_flag'].fillna('').astype(str)
+
+    total_flagged = 0
+    for source_name, src_merged in merged.groupby('source'):
+        tam_ids = set(src_merged['source_record_id_tam'].astype(str))
+        id_map = dict(zip(
+            src_merged['source_record_id_tam'].astype(str),
+            src_merged['source_record_id_other'].astype(str),
+        ))
+        flag_str = f'cofinancing_overlap:tam_{source_name.lower()}_pdf'
+        mask = (df['source'] == 'TAM') & df['source_record_id'].astype(str).isin(tam_ids)
+        df.loc[mask, 'dc_preferred'] = False
+        df.loc[mask, 'dc_flag'] = df.loc[mask, 'dc_flag'].map(
+            lambda x: (x + '|' if x else '') + flag_str
+        )
+        df.loc[mask, 'cofinancing_partner_id'] = (
+            df.loc[mask, 'source_record_id'].astype(str).map(id_map)
+        )
+        n = mask.sum()
+        total_flagged += n
+        if n > 0:
+            log.info(f"    PDF co-fin overlap ({source_name}): {n} TAM rows flagged")
+
+    if total_flagged > 0:
+        log.info(f"  PDF co-fin overlaps total: {total_flagged} TAM rows flagged")
+    return df
+
+
 # ============================================================================
 # MAIN CONSOLIDATION ENTRY POINT
 # ============================================================================
@@ -946,6 +1165,9 @@ def consolidate(
     prefix: str = 'match',
     company_list_csv: Path | None = None,
     aliases_json: Path | None = None,
+    run_pdf_enrichment: bool = False,
+    pdf_cache_dir: Path | None = None,
+    use_llm: bool = False,
 ) -> pd.DataFrame:
     """Run the full generic consolidation pipeline.
 
@@ -962,6 +1184,14 @@ def consolidate(
         Directory containing enrichment output CSVs.
     prefix : str
         Column prefix used by the matcher (e.g., 'automotive', 'match').
+    run_pdf_enrichment : bool
+        If True, download and parse SA decision PDFs to detect EU fund co-financing
+        for TAM rows. Results are used by _flag_pdf_cofin_overlaps(). Default False.
+    pdf_cache_dir : Path | None
+        Directory to cache downloaded SA PDFs. Defaults to output_dir/sa_decisions.
+    use_llm : bool
+        If True, use Claude Haiku as Tier 3 fallback in PDF enrichment when regex
+        finds no signal. Requires ANTHROPIC_API_KEY. Only used if run_pdf_enrichment=True.
 
     Returns
     -------
@@ -1005,6 +1235,25 @@ def consolidate(
     )
 
     # ------------------------------------------------------------------
+    # Phase 2c: SA PDF co-financing enrichment (optional)
+    # Downloads EC state aid decision PDFs and extracts EU fund co-financing
+    # evidence. Must run BEFORE dedup so _flag_pdf_cofin_overlaps has data.
+    # Activate with: run_pipeline.py --pdf-enrichment [--use-llm]
+    # ------------------------------------------------------------------
+    if run_pdf_enrichment:
+        log.info("\nPhase 2c: SA PDF co-financing enrichment...")
+        from src.enrichment.sa_pdf_parser import SACofinParser
+        from src.enrichment.sa_case_lookup import SACaseLookup
+        # Resolve repo root: match_log_csv is data/processed/match_output/match_log.csv
+        # → .parent×4 = repo root
+        _repo_root = Path(match_log_csv).resolve().parent.parent.parent.parent
+        _sa_json = _repo_root / 'case-data-SA.json'
+        sa_lookup = SACaseLookup(_sa_json).load()
+        pdf_cache = Path(pdf_cache_dir) if pdf_cache_dir else (output_dir / 'sa_decisions')
+        parser = SACofinParser(cache_dir=pdf_cache, use_llm=use_llm)
+        combined = parser.enrich_dataframe(combined, sa_lookup)
+
+    # ------------------------------------------------------------------
     # Phase 2b: Reference name normalisation + cross-source dedup
     # ------------------------------------------------------------------
     log.info("\nPhase 2b: Reference name normalisation & cross-source dedup...")
@@ -1032,9 +1281,14 @@ def consolidate(
         lambda sid: prog_map.get(sid, ('', ''))[1]
     ).fillna('')
 
+    # Ensure dedup functions can find 'match_reference_name' regardless of prefix
+    if ref_col != 'match_reference_name' and ref_col in combined.columns:
+        combined['match_reference_name'] = combined[ref_col]
+
     # Apply dedup logic (each function sets dc_preferred=False + dc_flag on affected rows)
     combined = _dedup_fts_identical_transactions(combined, prog_map)
     combined = _flag_cofinancing_overlaps(combined)
+    combined = _flag_pdf_cofin_overlaps(combined)   # PDF-backed; no-op if enrichment not run
     combined = _dedup_same_record_multicountry(combined)
     combined = _flag_ipcei_tam_overlap(combined)
     combined = _add_attribution_type(combined, prefix=prefix)

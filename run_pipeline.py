@@ -57,6 +57,13 @@ MASTER_DATASET_URL = (
     "/releases/download/v1.0/master_dataset.parquet"
 )
 
+# EC DG Competition state aid case registry — downloaded automatically on first run.
+SA_CASE_JSON = REPO_ROOT / 'case-data-SA.json'
+SA_CASE_JSON_URL = (
+    "https://github.com/amc-econ/eu-subsidies-beneficiaries"
+    "/releases/download/v1.0/case-data-SA.json"
+)
+
 
 def _ensure_master_dataset() -> bool:
     """Download master_dataset.parquet if not present. Returns True if ready."""
@@ -83,6 +90,33 @@ def _ensure_master_dataset() -> bool:
         log.error(f"Download failed: {e}")
         log.error(f"Download manually from: {MASTER_DATASET_URL}")
         log.error(f"and place at: {MASTER_PARQUET}")
+        return False
+
+
+def _ensure_sa_case_json() -> bool:
+    """Download case-data-SA.json if not present. Returns True if ready."""
+    if SA_CASE_JSON.exists() and SA_CASE_JSON.stat().st_size > 10_000_000:
+        return True
+    log.info("case-data-SA.json not found locally.")
+    log.info("Downloading from GitHub Releases (~638 MB)...")
+    try:
+        import urllib.request
+
+        def _progress(count, block_size, total_size):
+            if total_size > 0:
+                pct = min(count * block_size * 100 / total_size, 100)
+                mb = count * block_size / 1_000_000
+                total_mb = total_size / 1_000_000
+                print(f"\r  {mb:.0f} / {total_mb:.0f} MB ({pct:.1f}%)", end='', flush=True)
+
+        urllib.request.urlretrieve(SA_CASE_JSON_URL, SA_CASE_JSON, reporthook=_progress)
+        print()
+        log.info("Download complete.")
+        return True
+    except Exception as e:
+        log.error(f"Download failed: {e}")
+        log.error(f"Download manually from: {SA_CASE_JSON_URL}")
+        log.error(f"and place at: {SA_CASE_JSON}")
         return False
 
 
@@ -133,6 +167,8 @@ def stage_match(
     output_dir: str | None = None,
     config_json: str | None = None,
     match_config=None,
+    pdf_enrichment: bool = False,
+    use_llm: bool = False,
 ) -> None:
     """Stage 4: Full matching pipeline — match + enrich + consolidate + charts.
 
@@ -220,10 +256,12 @@ def stage_match(
         log.warning(f"FTS-CORDIS bridge skipped: {e}")
 
     # ETS free allocation
+    nace_filter = config_data.get('nace_filter', None)
+    if isinstance(nace_filter, list):
+        nace_filter = nace_filter[0] if nace_filter else None
     log.info("\nRunning ETS enrichment...")
     try:
         from src.enrichment.ets_free_allocation import run_ets_enrichment
-        nace_filter = config_data.get('nace_filter', None)
         run_ets_enrichment(
             company_list_csv=str(company_list_path),
             aliases_json=str(aliases_path) if aliases_path else None,
@@ -266,6 +304,7 @@ def stage_match(
             company_list_csv=str(company_list_path),
             matched_csv=str(match_log),
             output_dir=str(enrichment_out),
+            nace_filter=nace_filter,
         )
     except Exception as e:
         log.warning(f"High-value forensics skipped: {e}")
@@ -287,6 +326,8 @@ def stage_match(
         prefix=prefix,
         company_list_csv=str(company_list_path),
         aliases_json=str(aliases_path) if aliases_path else None,
+        run_pdf_enrichment=pdf_enrichment,
+        use_llm=use_llm,
     )
 
     # ---- Step 4: Summary charts ----
@@ -300,6 +341,93 @@ def stage_match(
         log.warning(f"Chart generation skipped: {e}")
 
     log.info("Matching complete — results in %s", out)
+
+
+def stage_enrich_pdf(
+    consolidated_csv: str | None = None,
+    use_llm: bool = False,
+) -> None:
+    """Enrich an existing consolidated_matches.csv with SA PDF co-financing data.
+
+    Runs AFTER the match pipeline — no need to re-run matching. Loads the
+    existing consolidated output, adds sa_cofin_* columns by parsing EC state aid
+    decision PDFs for all TAM rows, then re-runs _flag_pdf_cofin_overlaps to
+    update dc_preferred / dc_flag, and saves the file in place.
+
+    Usage:
+        python run_pipeline.py --stage enrich-pdf \\
+            --consolidated data/processed/match_output/automotive/consolidated_matches.csv
+        python run_pipeline.py --stage enrich-pdf \\
+            --consolidated path/to/consolidated_matches.csv --use-llm
+    """
+    import pandas as pd
+    from src.enrichment.sa_pdf_parser import SACofinParser
+    from src.enrichment.sa_case_lookup import SACaseLookup
+    from src.matching.consolidation import _flag_pdf_cofin_overlaps
+
+    if not consolidated_csv:
+        log.error("--consolidated is required for enrich-pdf stage")
+        return
+
+    csv_path = Path(consolidated_csv).resolve()
+    if not csv_path.exists():
+        log.error(f"File not found: {csv_path}")
+        return
+
+    log.info(f"Loading {csv_path.name} ...")
+    df = pd.read_csv(csv_path, low_memory=False)
+    log.info(f"  {len(df):,} rows, {(df['source'] == 'TAM').sum():,} TAM rows")
+
+    # sa_case column: normalised SA code derived from source_record_id on TAM rows.
+    # This column is expected by SACofinParser.enrich_dataframe(). It is populated
+    # automatically when running through the full consolidation pipeline (Phase 2b),
+    # but may be absent on CSV files produced by an earlier pipeline version.
+    from src.enrichment.sa_case_lookup import normalise_sa
+    if 'sa_case' not in df.columns:
+        df['sa_case'] = ''
+    tam_mask = df['source'] == 'TAM'
+    df.loc[tam_mask, 'sa_case'] = df.loc[tam_mask, 'source_record_id'].astype(str).map(normalise_sa)
+
+    # Load SA case lookup — auto-download if missing
+    sa_json = REPO_ROOT / 'case-data-SA.json'
+    if not sa_json.exists():
+        if not _ensure_sa_case_json():
+            log.error("case-data-SA.json unavailable — skipping PDF enrichment")
+            return
+    sa_lookup = SACaseLookup(sa_json).load()
+
+    # PDF enrichment — adds sa_cofin_* columns to TAM rows
+    pdf_cache = csv_path.parent / 'sa_decisions'
+    parser = SACofinParser(cache_dir=pdf_cache, use_llm=use_llm)
+    log.info("Running PDF co-financing enrichment...")
+    df = parser.enrich_dataframe(df, sa_lookup)
+
+    # Re-run PDF-backed dedup now that sa_cofin_* columns are populated
+    # Ensure dc_flag + dc_preferred exist (they should from the original run)
+    if 'dc_flag' not in df.columns:
+        df['dc_flag'] = ''
+    if 'dc_preferred' not in df.columns:
+        df['dc_preferred'] = True
+    if 'cofinancing_partner_id' not in df.columns:
+        df['cofinancing_partner_id'] = ''
+
+    log.info("Re-running PDF co-financing overlap detection...")
+    df = _flag_pdf_cofin_overlaps(df)
+
+    # Save in place (backup original)
+    backup = csv_path.with_name(csv_path.stem + '_pre_pdf.csv')
+    import shutil
+    shutil.copy2(csv_path, backup)
+    log.info(f"  Backup saved → {backup.name}")
+
+    df.to_csv(csv_path, index=False)
+    log.info(f"  Updated file saved → {csv_path}")
+
+    # Summary
+    n_cofin = (df.get('sa_cofin_level', '') == 'confirmed').sum() if 'sa_cofin_level' in df.columns else 0
+    n_flagged = df['dc_flag'].str.contains('_pdf', na=False).sum()
+    log.info(f"  TAM rows with confirmed co-financing: {n_cofin}")
+    log.info(f"  Rows flagged by PDF dedup: {n_flagged}")
 
 
 def stage_automotive() -> None:
@@ -366,7 +494,7 @@ def main():
     )
     parser.add_argument(
         '--stage', '-s',
-        choices=['harmonize', 'enrich', 'master', 'match', 'automotive', 'all'],
+        choices=['harmonize', 'enrich', 'master', 'match', 'enrich-pdf', 'automotive', 'all'],
         default=None,
         help='Pipeline stage to run',
     )
@@ -385,6 +513,39 @@ def main():
     parser.add_argument(
         '--config', '-cfg',
         help='Path to JSON config (parent_groups, sector_keywords, match overrides)',
+    )
+    parser.add_argument(
+        '--consolidated',
+        help='Path to consolidated_matches.csv — used by --stage enrich-pdf',
+    )
+    parser.add_argument(
+        '--pdf-enrichment',
+        action='store_true',
+        default=True,
+        help=(
+            'Download and parse EC state aid decision PDFs to detect EU fund co-financing '
+            'for TAM rows. Adds sa_cofin_* columns and enables PDF-backed duplicate detection '
+            'across all EU fund sources. PDFs are cached in output_dir/sa_decisions/. '
+            'Enabled by default — use --no-pdf-enrichment to skip. '
+            'Requires: pip install pdfplumber pymupdf4llm'
+        ),
+    )
+    parser.add_argument(
+        '--no-pdf-enrichment',
+        dest='pdf_enrichment',
+        action='store_false',
+        help='Disable PDF co-financing enrichment (not recommended — reduces dedup accuracy).',
+    )
+    parser.add_argument(
+        '--use-llm',
+        action='store_true',
+        default=False,
+        help=(
+            'Use Claude Haiku as a fallback in PDF co-financing detection when regex finds '
+            'no signal (non-English PDFs, footnote-fragmented sentences). Only active with '
+            '--pdf-enrichment. Requires: pip install anthropic  and  ANTHROPIC_API_KEY env var. '
+            '~$0.0014/PDF.'
+        ),
     )
     parser.add_argument(
         '--download-data',
@@ -408,7 +569,15 @@ def main():
         'harmonize': stage_harmonize,
         'enrich': stage_enrich,
         'master': stage_master,
-        'match': lambda: stage_match(args.company_list, args.aliases, args.output_dir, args.config),
+        'match': lambda: stage_match(
+            args.company_list, args.aliases, args.output_dir, args.config,
+            pdf_enrichment=args.pdf_enrichment,
+            use_llm=args.use_llm,
+        ),
+        'enrich-pdf': lambda: stage_enrich_pdf(
+            consolidated_csv=args.consolidated,
+            use_llm=args.use_llm,
+        ),
         'automotive': stage_automotive,
     }
 

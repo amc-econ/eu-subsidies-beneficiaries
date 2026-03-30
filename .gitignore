@@ -58,6 +58,10 @@ logs/
 # Cache
 cache/
 
+# EC DG Competition state aid case registry (~638 MB) — auto-downloaded on first run
+# with --pdf-enrichment (default). Source: GitHub Releases v1.0.
+case-data-SA.json
+
 # Ad-hoc analysis scripts — keep locally, don't commit
 audit_double_counting.py
 data/processed/audit/
