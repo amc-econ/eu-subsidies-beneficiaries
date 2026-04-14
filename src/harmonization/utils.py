@@ -51,6 +51,27 @@ COMMON_COLUMNS: list[str] = [
     'entity_id',                   # sha256(entity_name_clean|country)[:16]
     'entity_type',                 # company|public_body|ngo|university|individual|consortium|unknown
     'resolution_level',            # beneficiary|project|scheme|measure|country|aggregate
+    # --- Schema v3: aggressive-extraction enrichment layer ---
+    # Free-form JSON string carrying per-source extras that do not fit
+    # the common schema: CORDIS topic codes, deliverables, TRL levels,
+    # EuroSciVoc keywords; KOHESIO intervention field + green/digital
+    # tags; FTS budget-line hierarchy; INNOVFUND CO2-savings estimates;
+    # CINEA call identifiers; EIB project description + multi-tranche
+    # signatures + environmental aspects; SA PDF structured extracts
+    # (eligible costs, aid intensity, group structure). Always a JSON
+    # object string (``"{}"`` when empty) so downstream code can parse
+    # it uniformly. Matching never reads this column; it is strictly
+    # for post-match enrichment and reviewer audit. Plan audit \u00a76.6
+    # item 10 ("aggressive extraction, unbounded compute").
+    'extra_fields_json',
+    # --- Schema v3.1: structural filter flags ---
+    # ``is_anonymised`` marks rows whose ``beneficiary_name`` is a
+    # known anonymisation / bucket sentinel rather than a real
+    # beneficiary (see ``_ANONYMISED_EXACT_PATTERNS``). Default False;
+    # populated by the master builder via ``apply_anonymised_column``
+    # on every source and filtered out of headline totals in
+    # consolidation Phase 5c.
+    'is_anonymised',
 ]
 
 
@@ -668,6 +689,113 @@ def classify_entity_type(name: object) -> str:
     return 'unknown'
 
 
+# ============================================================================
+# Anonymised-beneficiary sentinel detection
+# ============================================================================
+# Master-parquet raw-data audit found that the top-20 `beneficiary_name`
+# values across sources are dominated by bucket sentinels rather than real
+# entities. These fall into three families:
+#
+#   1. Explicit anonymisation markers
+#      - "Anonymisierter Begünstigter (Deutschland)"  (KOHESIO, 45k rows)
+#      - "NATURAL PERSON; PERSONNE PRIVÉE"             (TAM, 46k rows)
+#
+#   2. Community / legal-form rollups that are not a single entity
+#      - "COMUNIDAD DE PROPIETARIOS"                   (TAM Spain, 8.7k rows)
+#
+#   3. Polish profession / business-category rollups used by national TAM
+#      supplement data when the individual trader is anonymised
+#      - "USŁUGI TRANSPORTOWE", "GABINET STOMATOLOGICZNY", "TAXI OSOBOWE",
+#        "KANCELARIA ADWOKACKA", "HANDEL OBWOŹNY", ~20 variants
+#
+# The ``is_anonymised`` column defaults False; the master builder sets it
+# True for any row whose `beneficiary_name` hits one of these patterns.
+# Consolidation's headline filter in Phase 5c excludes anonymised rows
+# from headline totals (but preserves them in the audit CSV).
+#
+# This is a structural fix, not an enrichment — these rows were never
+# beneficiaries in any meaningful sense and should never have reached the
+# matcher as candidates.
+
+_ANONYMISED_EXACT_PATTERNS = frozenset({
+    # Italian / EU anonymisation markers
+    'anonymisierter begünstigter',
+    'anonymisierter begünstigter (deutschland)',
+    'anonymisierter beguenstigter',
+    'anonymisierter beguenstigter (deutschland)',
+    'natural person; personne privée',
+    'natural person; personne privee',
+    'comunidad de propietarios',
+    'comunidade de condóminos',
+    # Polish profession rollups (TAM_PL supplement anonymised traders)
+    'usługi transportowe',
+    'gabinet stomatologiczny',
+    'taxi osobowe',
+    'taxi',
+    'zakład fryzjerski',
+    'salon fryzjerski',
+    'kancelaria adwokacka',
+    'kancelaria radcy prawnego',
+    'handel obwoźny',
+    'usługi ogólnobudowlane',
+    'usługi budowlane',
+    'usługi remontowo-budowlane',
+    'biuro rachunkowe',
+    'indywidualna praktyka lekarska',
+    'indywidualna specjalistyczna praktyka lekarska',
+    'gospodarstwo rolne',
+    'mechanika pojazdowa',
+    'pośrednictwo ubezpieczeniowe',
+    'firma handlowo-usługowa',
+    'firma usługowa',
+    'firma handlowa',
+    'przedsiębiorstwo handlowo-usługowe',
+})
+
+_ANONYMISED_PREFIX_PATTERNS = (
+    'anonymisiert',           # any Anonymisierter Begünstigter variant
+    'anonimizowany',          # Polish equivalent
+    'beneficiario anonimo',   # Spanish / Italian
+    'bénéficiaire anonyme',   # French
+)
+
+
+def is_anonymised_beneficiary(name: object) -> bool:
+    """Return True if ``name`` is one of the known bucket / anonymisation
+    sentinels rather than a real beneficiary. Case-insensitive, strips
+    surrounding whitespace.
+    """
+    if name is None:
+        return False
+    try:
+        if pd.isna(name):
+            return False
+    except (TypeError, ValueError):
+        pass
+    s = str(name).strip().lower()
+    if not s:
+        return False
+    if s in _ANONYMISED_EXACT_PATTERNS:
+        return True
+    for prefix in _ANONYMISED_PREFIX_PATTERNS:
+        if s.startswith(prefix):
+            return True
+    return False
+
+
+def apply_anonymised_column(df: pd.DataFrame) -> pd.DataFrame:
+    """Add or refresh the ``is_anonymised`` bool column on ``df``.
+
+    Always returns the same frame (in-place). Safe to call on frames
+    whose ``beneficiary_name`` column is ``None`` / empty / missing.
+    """
+    if 'beneficiary_name' not in df.columns:
+        df['is_anonymised'] = False
+        return df
+    df['is_anonymised'] = df['beneficiary_name'].apply(is_anonymised_beneficiary)
+    return df
+
+
 def apply_entity_columns(out: pd.DataFrame) -> None:
     """Populate entity_name_raw, entity_name_clean, entity_id, entity_type
     from beneficiary_name and country columns in-place."""
@@ -719,11 +847,20 @@ def validate_schema(df: pd.DataFrame, source_name: str, log: logging.Logger) -> 
     """Validate schema v2 controlled vocabularies. Logs warnings, returns warning count."""
     warnings = 0
 
+    # Optional schema-v3 columns that existing harmonizers may not populate.
+    # Missing these is a soft warning; the master builder will fill defaults.
+    _V3_OPTIONAL = {'extra_fields_json', 'is_anonymised'}
+
     # Check all COMMON_COLUMNS present
     missing = set(COMMON_COLUMNS) - set(df.columns)
-    if missing:
-        log.warning(f"  [{source_name}] Missing columns: {missing}")
+    missing_hard = missing - _V3_OPTIONAL
+    missing_soft = missing & _V3_OPTIONAL
+    if missing_hard:
+        log.warning(f"  [{source_name}] Missing columns: {missing_hard}")
         warnings += 1
+    if missing_soft:
+        log.info(f"  [{source_name}] Schema v3 optional columns missing "
+                 f"(will be filled by master builder): {missing_soft}")
 
     # Validate flow_stage
     if 'flow_stage' in df.columns:

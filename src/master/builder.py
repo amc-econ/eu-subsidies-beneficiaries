@@ -157,6 +157,35 @@ def build_master_dataset(
         master['is_primary_record'] = True
     if 'exclude_reason' not in master.columns:
         master['exclude_reason'] = None
+    # ---- Schema v3: extra_fields_json default ------------------------------
+    # Harmonizers that have been upgraded to the aggressive-extraction
+    # layer (EIB deep scraper, SA deep parser, CORDIS topic enricher,
+    # KOHESIO intervention enricher, …) populate ``extra_fields_json``
+    # with a per-row JSON object string carrying source-specific
+    # metadata. Harmonizers that have NOT been upgraded simply omit the
+    # column, and we backfill ``"{}"`` here so downstream code can
+    # parse every row uniformly.
+    if 'extra_fields_json' not in master.columns:
+        master['extra_fields_json'] = '{}'
+    else:
+        mask_empty = master['extra_fields_json'].isna() | (master['extra_fields_json'] == '')
+        if mask_empty.any():
+            master.loc[mask_empty, 'extra_fields_json'] = '{}'
+
+    # ---- Schema v3.1: is_anonymised structural filter ----------------------
+    # Mark rows whose beneficiary_name is a bucket / anonymisation
+    # sentinel rather than a real entity. The consolidation headline
+    # filter in Phase 5c excludes these rows from published totals.
+    from ..harmonization.utils import apply_anonymised_column
+    apply_anonymised_column(master)
+    n_anon = int(master['is_anonymised'].sum())
+    if n_anon:
+        n_eur = float(master.loc[master['is_anonymised'], 'amount_eur'].fillna(0).sum())
+        log.info(
+            f"  Anonymised sentinel scrub: {n_anon:,} rows flagged "
+            f"({n_eur/1e9:.2f}B EUR face) across "
+            f"{master.loc[master['is_anonymised'], 'source'].nunique()} sources"
+        )
 
     # ---- Apply config-driven exclusion flags -------------------------------
     # These refine is_primary_record based on MasterConfig settings.

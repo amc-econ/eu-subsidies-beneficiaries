@@ -30,9 +30,56 @@ import json
 import re
 import logging
 import time
+from dataclasses import dataclass, field
 from pathlib import Path
 
 log = logging.getLogger(__name__)
+
+
+# ============================================================================
+# Deduplication configuration (L2)
+# ============================================================================
+# Consolidated in one place so future per-source-pair tuning does not require
+# patching three separate function signatures. Defaults match the previously
+# hardcoded values so existing runs are byte-identical.
+
+@dataclass
+class DedupConfig:
+    """Configurable thresholds for cross-source deduplication (L2).
+
+    Every threshold was previously hardcoded inside `_flag_*` functions in
+    this module; L2 promoted them here so notebook callers can override any
+    single threshold without monkey-patching. See `research/PIPELINE_AUDIT.md`
+    H3 for why these should eventually be empirically validated against the
+    PDF-confirmed gold set.
+    """
+
+    # Year window (in years, inclusive) for all (company, country, year)
+    # joins used by dedup functions. Applied in both the document-backed
+    # path (_flag_pdf_cofin_overlaps) and the heuristic fallback
+    # (_flag_cofinancing_overlaps) as well as _flag_ipcei_tam_overlap.
+    pdf_cofin_year_window: int = 2
+    heuristic_cofin_year_window: int = 2
+    ipcei_tam_year_window: int = 2
+
+    # Plausibility ratio band for the heuristic TAM↔KOHESIO fallback.
+    # KOHESIO/TAM ratio must be in [min, max] to flag as an overlap.
+    # Lower bound excludes coincidental matches; upper bound covers
+    # multi-year KOHESIO disbursements against a single annual TAM notification.
+    heuristic_cofin_ratio_min: float = 0.01
+    heuristic_cofin_ratio_max: float = 1.50
+
+    # IPCEI↔TAM amount tolerance — the two databases can differ because IPCEI
+    # reference amounts are at EC approval time while TAM notifications reflect
+    # the final notified amount.
+    ipcei_tam_amount_tolerance: float = 0.20
+
+    # FTS↔INNOVFUND identical-transaction tolerance. The two databases record
+    # the same grant with amounts that should agree to the cent.
+    fts_innovfund_amount_tolerance: float = 0.001
+
+
+DEFAULT_DEDUP_CONFIG = DedupConfig()
 
 
 # ============================================================================
@@ -45,6 +92,10 @@ GGE_RATES = {
     'mixed': 0.50, 'loan': 0.15, 'guarantee': 0.10, 'tax_advantage': 0.15,
 }
 REPAYABLE_ADVANCE_RATE = 0.90
+
+# Counter for unknown/missing instrument classes encountered during a run.
+# Reset by consolidate() before Phase 4 and reported at the end of it.
+_GGE_UNKNOWN_COUNTS: dict[str, int] = {}
 
 
 # ============================================================================
@@ -83,13 +134,36 @@ def _country_to_block(iso2: str) -> str:
     return COUNTRY_BLOCK_MAP.get(iso2, 'Other')
 
 
-def _gge_rate(row):
-    """Compute GGE rate for a single row based on financial instrument."""
+def _gge_rate_and_source(row):
+    """Return (rate, source) for a single row.
+
+    Sources:
+        'measured'  — instrument is in GGE_RATES; rate comes from the table.
+        'measured_repayable' — loan marked repayable-advance, uses REPAYABLE_ADVANCE_RATE.
+        'unknown'   — instrument is empty or not in the table. rate is NaN
+                      so ``amount_eur * rate`` propagates NaN and the row is
+                      excluded from GGE headline totals (§6.5 no-invention
+                      principle: we do not fabricate a GGE for instruments
+                      we have not classified).
+
+    The unknown counter is still populated so Phase 4 can log a summary.
+    """
+    import math
     inst = str(row.get('financial_instrument_class', '')).lower().strip()
     subtype = str(row.get('instrument_subtype', '')).lower()
     if inst == 'loan' and 'repayable' in subtype:
-        return REPAYABLE_ADVANCE_RATE
-    return GGE_RATES.get(inst, 1.0)
+        return REPAYABLE_ADVANCE_RATE, 'measured_repayable'
+    if inst in GGE_RATES:
+        return GGE_RATES[inst], 'measured'
+    key = inst if inst else '<empty>'
+    _GGE_UNKNOWN_COUNTS[key] = _GGE_UNKNOWN_COUNTS.get(key, 0) + 1
+    return math.nan, 'unknown'
+
+
+def _gge_rate(row):
+    """Backwards-compatible shim returning just the rate."""
+    rate, _ = _gge_rate_and_source(row)
+    return rate
 
 
 # ============================================================================
@@ -139,15 +213,39 @@ def assign_parent_group(ref_name: str, parent_groups: dict) -> str:
 # MATCH QUALITY ASSESSMENT
 # ============================================================================
 
+_GENERIC_IFI_TITLE_TOKENS = frozenset({
+    'project', 'programme', 'program', 'framework', 'loan', 'facility', 'fund',
+    'investment', 'infrastructure', 'european', 'eib', 'ebrd', 'finance',
+    'financing', 'guarantee', 'support', 'co-financing', 'cofinancing',
+    'energy', 'transport', 'water', 'waste', 'health', 'climate', 'green',
+    'renewable', 'research', 'innovation', 'development', 'sme', 'smes',
+    'midcap', 'midcaps', 'ltd', 'group', 'bank', 'scheme',
+})
+
+
 def assess_match_quality(df, prefix='match'):
-    """Flag likely false positives from description-only matching.
+    """Flag likely false positives from description-only and IFI-title matching.
 
-    For KOHESIO/FTS/CINEA rows matched on 'description' (not entity_name),
-    checks if the reference name appears in beneficiary_name. If not, flags
-    as suspect (e.g., "Samsung tablet" matching Samsung SDI).
+    Two independent suspect checks run here:
 
-    EIB description matches are NOT flagged because EIB beneficiary_name
-    is the project title, not the company name.
+    1. **Description-only matches in EU-fund rows.** For KOHESIO / FTS / CINEA
+       rows that matched on the `description` field rather than on
+       `entity_name`, the reference company's significant tokens must appear
+       in `beneficiary_name`. If not, the row is re-tagged
+       `suspect_description_only` (e.g. "Samsung tablet" matching Samsung SDI,
+       "Michelin star" matching Michelin).
+
+    2. **IFI title extractions (M5).** EIB / EBRD rows are intentionally
+       excluded from check 1 because their `beneficiary_name` field *is* the
+       project title, not a company name — the naive test would spuriously
+       fail on every good match. Instead, rows with `match_type =
+       eib_title_extraction` are re-tagged `suspect_eib_title` when the
+       reference name is too generic to carry any signal from a project
+       title: either the cleaned reference name is a single short token, or
+       all of its significant tokens are common IFI-project boilerplate
+       (project, programme, energy, infrastructure, …). These rows still
+       appear in the consolidated output with `dc_preferred=True`; the flag
+       is advisory only, so that downstream audits can filter them out.
     """
     log.info("Assessing match quality...")
     ref_col = f'{prefix}_reference_name'
@@ -156,14 +254,11 @@ def assess_match_quality(df, prefix='match'):
     if 'match_quality' not in df.columns:
         df['match_quality'] = 'confirmed'
 
+    # ---- check 1: description-only matches in EU-fund rows ----
     desc_mask = (
         df.get(matched_on_col, pd.Series(dtype=str)).eq('description') &
         df['source'].isin(['KOHESIO', 'FTS', 'CINEA'])
     )
-
-    if desc_mask.sum() == 0:
-        log.info("  No description-matched KOHESIO/FTS rows to check")
-        return df
 
     def _ref_in_ben(row):
         ref = str(row.get(ref_col, '')).lower().strip()
@@ -177,15 +272,57 @@ def assess_match_quality(df, prefix='match'):
             return True
         return any(w in ben for w in ref_words)
 
-    check_rows = df[desc_mask]
-    ref_found = check_rows.apply(_ref_in_ben, axis=1)
-    suspect_mask = desc_mask & ~df.index.isin(check_rows[ref_found].index)
-    df.loc[suspect_mask, 'match_quality'] = 'suspect_description_only'
+    if desc_mask.sum() > 0:
+        check_rows = df[desc_mask]
+        ref_found = check_rows.apply(_ref_in_ben, axis=1)
+        suspect_desc_mask = desc_mask & ~df.index.isin(check_rows[ref_found].index)
+        df.loc[suspect_desc_mask, 'match_quality'] = 'suspect_description_only'
+        n_desc = suspect_desc_mask.sum()
+        eur_desc = df.loc[suspect_desc_mask, 'amount_eur'].sum()
+        log.info(f"  Suspect (description-only EU-fund rows): {n_desc:,} rows, EUR {eur_desc/1e6:.0f}M")
+    else:
+        log.info("  No description-matched EU-fund rows to check")
 
-    n_suspect = suspect_mask.sum()
-    eur_suspect = df.loc[suspect_mask, 'amount_eur'].sum()
-    log.info(f"  Confirmed: {len(df) - n_suspect:,} rows")
-    log.info(f"  Suspect (description-only): {n_suspect:,} rows, EUR {eur_suspect/1e6:.0f}M")
+    # ---- check 2: IFI title extractions (M5) ----
+    if 'match_type' in df.columns:
+        eib_title_mask = (
+            df['source'].isin(['EIB', 'EBRD'])
+            & df['match_type'].fillna('').str.contains('eib_title', case=False, na=False)
+        )
+    else:
+        eib_title_mask = pd.Series(False, index=df.index)
+
+    if eib_title_mask.sum() > 0:
+        def _ifi_ref_suspect(row):
+            ref = str(row.get(ref_col, '')).lower().strip()
+            ref = re.sub(
+                r'\b(s\.?p\.?a\.?|s\.?r\.?l\.?|gmbh|ag|ltd|inc|plc|sa|se|kft|zrt|srl|'
+                r'n\.?v\.?|b\.?v\.?|plc|llc)\b\.?',
+                '', ref,
+            ).strip()
+            tokens = [t for t in re.split(r'\W+', ref) if len(t) > 2]
+            # Single-token short reference → unsafe to infer a title match
+            # (too many title words could accidentally satisfy it).
+            if len(tokens) <= 1:
+                return True
+            # Every significant token is generic IFI-project vocabulary.
+            non_generic = [t for t in tokens if t not in _GENERIC_IFI_TITLE_TOKENS]
+            if not non_generic:
+                return True
+            return False
+
+        eib_check = df[eib_title_mask]
+        suspect_eib_idx = eib_check[eib_check.apply(_ifi_ref_suspect, axis=1)].index
+        df.loc[suspect_eib_idx, 'match_quality'] = 'suspect_eib_title'
+        n_eib = len(suspect_eib_idx)
+        eur_eib = df.loc[suspect_eib_idx, 'amount_eur'].sum()
+        log.info(
+            f"  Suspect (IFI title extraction with generic reference name): "
+            f"{n_eib:,} rows, EUR {eur_eib/1e6:.0f}M"
+        )
+
+    n_suspect_total = (df['match_quality'] != 'confirmed').sum()
+    log.info(f"  Confirmed rows: {len(df) - n_suspect_total:,}")
 
     return df
 
@@ -303,8 +440,100 @@ def _extract_company_from_cordis_row(row, company_re):
     return 'unattributed_rd'
 
 
-def _load_enrichment_csv(path, label):
-    """Load an enrichment CSV if it exists."""
+# Minimum schema every enrichment CSV should honour (M2).
+# `required` columns must be present. If they're absent, the CSV is loaded but
+# rejected by `integrate_enrichment` with a visible warning — silently merging
+# a malformed CSV into the core dataframe is a common way for schema drift to
+# corrupt headline totals without anyone noticing. The `amount_col` is the
+# column that should be non-NaN on rows we want to count toward totals; if all
+# rows have NaN in it, we warn (the CSV may still be merged as name-only
+# coverage, but with explicit awareness).
+ENRICHMENT_SCHEMA: dict[str, dict] = {
+    # Only the four enrichment outputs that integrate_enrichment actually
+    # reads are listed here. FTS deep mining and high-value forensics write
+    # their own diagnostic files; they don't flow through this pipeline.
+    'fts_cordis': {
+        'required': ['source_record_id'],
+        'amount_col': 'amount_eur',
+    },
+    'eib_promoter': {
+        'required': ['source_record_id'],
+        'amount_col': 'amount_eur',
+    },
+    'ets_free_allocation': {
+        'required': ['matched_company'],
+        # ETS has no standard amount column — it's annual free allocations,
+        # merged via its own specialised block below.
+        'amount_col': None,
+    },
+    'ipcei': {
+        'required': ['company_name', 'ipcei', 'sa_case'],
+        'amount_col': 'amount_eur',
+    },
+    'sa_adhoc': {
+        # Ad hoc state-aid decision pre-load (H8). Required columns are
+        # minimal because the parser emits name-only rows when amount
+        # extraction fails — the row is still useful as an audit hint.
+        'required': ['sa_case', 'match_reference_name', 'extracted_beneficiary'],
+        'amount_col': 'amount_eur',
+    },
+}
+
+
+def _validate_enrichment_schema(df: pd.DataFrame, label: str, schema_key: str) -> bool:
+    """Validate an enrichment DataFrame against ENRICHMENT_SCHEMA.
+
+    Returns True if the frame is safe to merge into the core dataframe. On
+    failure, logs a warning identifying the missing columns and returns False
+    so the caller can skip the merge. Never raises — schema drift should be
+    visible in the run log, not a pipeline-halting exception.
+    """
+    schema = ENRICHMENT_SCHEMA.get(schema_key)
+    if schema is None or df.empty:
+        return True
+    required = schema.get('required', [])
+    missing = [c for c in required if c not in df.columns]
+    if missing:
+        log.warning(
+            f"    {label}: enrichment schema check FAILED — missing required columns {missing}. "
+            f"This CSV will be skipped rather than merged into the core dataframe."
+        )
+        return False
+    amount_col = schema.get('amount_col')
+    if amount_col and amount_col in df.columns:
+        n_with_amt = df[amount_col].notna().sum()
+        n_rows = len(df)
+        if n_with_amt == 0:
+            log.warning(
+                f"    {label}: schema check — {n_rows:,} rows but 0 with a non-NaN "
+                f"`{amount_col}`. These rows cannot contribute to headline totals."
+            )
+        elif n_with_amt < n_rows * 0.5:
+            log.info(
+                f"    {label}: schema check — {n_with_amt:,}/{n_rows:,} rows have "
+                f"`{amount_col}` (the rest are name-only coverage)."
+            )
+    # Duplicate source_record_id check — catches the most common schema drift:
+    # an enrichment script emitting the same row twice, usually because two
+    # joins matched the same upstream record.
+    if 'source_record_id' in df.columns:
+        n_dup = df['source_record_id'].astype(str).duplicated().sum()
+        if n_dup > 0:
+            log.warning(
+                f"    {label}: {n_dup:,} duplicate source_record_id values "
+                f"(may inflate counts — check the upstream enrichment script)."
+            )
+    return True
+
+
+def _load_enrichment_csv(path, label, schema_key: str | None = None):
+    """Load an enrichment CSV and validate it against the schema contract (M2).
+
+    If `schema_key` is provided, the CSV is validated against the corresponding
+    entry in `ENRICHMENT_SCHEMA`. On schema failure, an empty DataFrame is
+    returned so the caller skips the merge — the warning has already been
+    logged.
+    """
     if not path.exists():
         log.info(f"  {label}: not found at {path}")
         return pd.DataFrame()
@@ -312,6 +541,9 @@ def _load_enrichment_csv(path, label):
     eur_col = 'amount_eur' if 'amount_eur' in df.columns else 'total_eur_free' if 'total_eur_free' in df.columns else None
     eur_str = f"EUR {df[eur_col].sum():,.0f}" if eur_col else "(no EUR column)"
     log.info(f"  {label}: {len(df):,} rows, {eur_str}")
+    if schema_key:
+        if not _validate_enrichment_schema(df, label, schema_key):
+            return pd.DataFrame()
     return df
 
 
@@ -358,6 +590,36 @@ def integrate_enrichment(core_df, enrichment_dir, prefix='match',
     combined = core_df.copy()
     core_sids = set(core_df['source_record_id'].astype(str).unique())
 
+    # Seed optional columns that enrichment rows may carry so they survive the
+    # `combined.columns.intersection(...)` concat pattern used below. Adding
+    # them here with sensible defaults lets enrichment writers (IPCEI PDF
+    # parser, etc.) propagate per-row metadata without each one having to
+    # monkey-patch the core schema.
+    if 'ipcei_ticker' not in combined.columns:
+        combined['ipcei_ticker'] = ''
+    if 'amount_confidence' not in combined.columns:
+        # 'measured' is the default for every row that came from a harmonized
+        # source with an actual amount_eur value. Enrichment rows that write
+        # bracket-range midpoints (IPCEI PDF parser) override this with
+        # 'range_from_pdf' / 'exact_from_pdf' / 'redacted' so downstream code
+        # can distinguish measured values from PDF-derived approximations.
+        combined['amount_confidence'] = 'measured'
+    if 'is_adhoc_preloaded' not in combined.columns:
+        # Marker for rows injected by the ad hoc state-aid pre-loader (H8).
+        # False on every harmonized row; True only on rows that came from
+        # `sa_adhoc_matched.csv`. Downstream charts can filter on this column
+        # to separate pre-2016 historical coverage from post-2016 TAM.
+        combined['is_adhoc_preloaded'] = False
+    # Bracket-range bounds for amounts that come as [low - high] in a
+    # source (currently only IPCEI PDF extraction). For every other row
+    # ``amount_eur_low == amount_eur_high == amount_eur``. This lets the
+    # §6.5 no-invention posture be enforced downstream — headline totals
+    # can be summed on ``amount_eur_low`` for a provable lower bound.
+    if 'amount_eur_low' not in combined.columns:
+        combined['amount_eur_low'] = combined['amount_eur']
+    if 'amount_eur_high' not in combined.columns:
+        combined['amount_eur_high'] = combined['amount_eur']
+
     # Build a company regex for entity extraction in enrichment rows.
     # Prefer the original company list CSV (short canonical names that match
     # CORDIS legal names better) over the matcher's reference_name column.
@@ -372,7 +634,7 @@ def integrate_enrichment(core_df, enrichment_dir, prefix='match',
     fts_cordis_path = enrichment_dir / 'fts_via_cordis.csv'
     if not fts_cordis_path.exists():
         fts_cordis_path = enrichment_dir / 'fts_automotive_via_cordis.csv'
-    fts_cordis = _load_enrichment_csv(fts_cordis_path, 'FTS-CORDIS')
+    fts_cordis = _load_enrichment_csv(fts_cordis_path, 'FTS-CORDIS', schema_key='fts_cordis')
     if len(fts_cordis) > 0:
         fts_cordis['_sid'] = fts_cordis['source_record_id'].astype(str)
         fts_fts_ids = set(combined.loc[combined['source'] == 'FTS', 'source_record_id'].astype(str))
@@ -425,7 +687,7 @@ def integrate_enrichment(core_df, enrichment_dir, prefix='match',
 
     # --- EIB promoter ---
     eib_path = enrichment_dir / 'eib_enriched.csv'
-    eib = _load_enrichment_csv(eib_path, 'EIB promoter')
+    eib = _load_enrichment_csv(eib_path, 'EIB promoter', schema_key='eib_promoter')
     if len(eib) > 0:
         eib['_sid'] = eib['source_record_id'].astype(str)
         core_eib_ids = set(combined.loc[combined['source'] == 'EIB', 'source_record_id'].astype(str))
@@ -441,23 +703,42 @@ def integrate_enrichment(core_df, enrichment_dir, prefix='match',
                                  ignore_index=True)
             stats['eib_promoter'] = {'rows': len(eib), 'eur': eib['amount_eur'].sum()}
 
-    # --- IPCEI ---
+    # --- IPCEI (PDF-grounded) ---
+    # ipcei_reference.run_ipcei_enrichment writes ipcei_matched_participants.csv
+    # with per-company aid amounts extracted from the 12 IPCEI decision PDFs.
+    # Amounts are bracket-range midpoints (EC redacts exact figures in public
+    # decision text); amount_confidence tags each row as exact_from_pdf,
+    # range_from_pdf, or redacted. A non-empty ipcei_ticker column identifies
+    # which IPCEI programme the row belongs to. See src/enrichment/ipcei_pdf_parser.py.
     ipcei_path = enrichment_dir / 'ipcei_matched_participants.csv'
     if not ipcei_path.exists():
         ipcei_path = enrichment_dir / 'ipcei_automotive_participants.csv'
-    ipcei = _load_enrichment_csv(ipcei_path, 'IPCEI')
+    ipcei = _load_enrichment_csv(ipcei_path, 'IPCEI', schema_key='ipcei')
     if len(ipcei) > 0 and 'amount_eur' in ipcei.columns:
         ipcei_with_amounts = ipcei[ipcei['amount_eur'].notna() & (ipcei['amount_eur'] > 0)]
         if len(ipcei_with_amounts) > 0:
             ipcei_with_amounts = ipcei_with_amounts.copy()
-            ipcei_with_amounts['source'] = 'IPCEI_state_aid'
-            ipcei_with_amounts['financial_instrument_class'] = 'grant'
-            ipcei_with_amounts['fiscal_source_type'] = 'national_budget'
+            # Defaults (the PDF-parser wrapper already sets these but be safe
+            # in case an older enrichment CSV is being re-used):
+            if 'source' not in ipcei_with_amounts.columns or ipcei_with_amounts['source'].isna().all():
+                ipcei_with_amounts['source'] = 'IPCEI_state_aid'
+            if 'financial_instrument_class' not in ipcei_with_amounts.columns:
+                ipcei_with_amounts['financial_instrument_class'] = 'grant'
+            if 'fiscal_source_type' not in ipcei_with_amounts.columns:
+                ipcei_with_amounts['fiscal_source_type'] = 'national_budget'
+            if 'ipcei_ticker' not in ipcei_with_amounts.columns:
+                ipcei_with_amounts['ipcei_ticker'] = ipcei_with_amounts.get(
+                    'ipcei', pd.Series('', index=ipcei_with_amounts.index)
+                ).fillna('')
+            if 'amount_confidence' not in ipcei_with_amounts.columns:
+                ipcei_with_amounts['amount_confidence'] = 'range_from_pdf'
 
-            # Populate matching columns so group assignment works
+            # Populate matching columns so group assignment works.
             if ref_col not in ipcei_with_amounts.columns or ipcei_with_amounts[ref_col].isna().all():
                 ipcei_with_amounts[ref_col] = ipcei_with_amounts.get(
-                    'matched_company', ipcei_with_amounts.get('company', pd.Series('', index=ipcei_with_amounts.index))
+                    'match_reference_name',
+                    ipcei_with_amounts.get('company_name',
+                        ipcei_with_amounts.get('company', pd.Series('', index=ipcei_with_amounts.index)))
                 ).fillna('')
             if type_col not in ipcei_with_amounts.columns:
                 ipcei_with_amounts[type_col] = 'ipcei_reference'
@@ -467,13 +748,81 @@ def integrate_enrichment(core_df, enrichment_dir, prefix='match',
             combined = pd.concat(
                 [combined, ipcei_with_amounts[combined.columns.intersection(ipcei_with_amounts.columns)]],
                 ignore_index=True)
+            n_range = (ipcei_with_amounts['amount_confidence'] == 'range_from_pdf').sum() if 'amount_confidence' in ipcei_with_amounts.columns else 0
+            n_exact = (ipcei_with_amounts['amount_confidence'] == 'exact_from_pdf').sum() if 'amount_confidence' in ipcei_with_amounts.columns else 0
+            log.info(f"    IPCEI confidence: {n_exact} exact_from_pdf, {n_range} range_from_pdf")
             stats['ipcei'] = {'rows': len(ipcei_with_amounts), 'eur': ipcei_with_amounts['amount_eur'].sum()}
+
+    # --- Ad hoc state-aid decision pre-load (H8) ---
+    # sa_adhoc_parser.py writes one row per matched ad hoc decision. Each row
+    # carries the SA code, the beneficiary extracted from the decision title,
+    # the match against the user's reference list, and (when regex could
+    # extract it) an EUR amount from the decision PDF. Rows without an
+    # extracted amount are kept as audit hints — downstream's `amount_eur > 0`
+    # filter drops them from headline totals automatically.
+    #
+    # SA-code de-duplication: any SA code that already appears in a TAM row
+    # flowing out of harmonization is dropped here, because the TAM row is
+    # authoritative and more granular. The preload is additive coverage only.
+    adhoc_path = enrichment_dir / 'sa_adhoc_matched.csv'
+    adhoc = _load_enrichment_csv(adhoc_path, 'Ad hoc preload', schema_key='sa_adhoc')
+    if len(adhoc) > 0:
+        existing_tam_sa = set(
+            combined.loc[combined['source'] == 'TAM', 'source_record_id']
+            .astype(str)
+            .map(lambda s: s.strip())
+            .unique()
+        )
+        before = len(adhoc)
+        adhoc['sa_case'] = adhoc['sa_case'].astype(str).str.strip()
+        adhoc = adhoc[~adhoc['sa_case'].isin(existing_tam_sa)].copy()
+        log.info(
+            f"    Ad hoc dedup vs existing TAM: {before - len(adhoc)} already in TAM, "
+            f"{len(adhoc)} genuinely new"
+        )
+        if len(adhoc) > 0:
+            # Populate consolidation-ready columns.
+            adhoc['source'] = 'TAM'
+            adhoc['source_record_id'] = adhoc['sa_case']
+            adhoc['beneficiary_name'] = adhoc.get('extracted_beneficiary', '')
+            adhoc['financial_instrument_class'] = adhoc.get(
+                'financial_instrument_class', pd.Series('grant', index=adhoc.index)
+            ).fillna('grant')
+            adhoc['fiscal_source_type'] = 'national_budget'
+            adhoc['is_adhoc_preloaded'] = True
+            if 'amount_confidence' not in adhoc.columns:
+                adhoc['amount_confidence'] = 'not_extracted'
+            # Matcher metadata — so group assignment and match-quality checks
+            # treat these rows like any other matched row.
+            if ref_col not in adhoc.columns or adhoc[ref_col].isna().all():
+                adhoc[ref_col] = adhoc.get('match_reference_name', '')
+            if type_col not in adhoc.columns:
+                adhoc[type_col] = 'sa_adhoc_preload'
+            if score_col not in adhoc.columns:
+                adhoc[score_col] = 100
+
+            combined = pd.concat(
+                [combined, adhoc[combined.columns.intersection(adhoc.columns)]],
+                ignore_index=True,
+            )
+            n_with_amt = adhoc['amount_eur'].notna().sum() if 'amount_eur' in adhoc.columns else 0
+            log.info(
+                f"    Ad hoc preload: {len(adhoc)} rows merged, "
+                f"{n_with_amt} with an extracted amount, "
+                f"{len(adhoc) - n_with_amt} name-only (will not contribute to headline totals)"
+            )
+            stats['sa_adhoc'] = {
+                'rows': len(adhoc),
+                'rows_with_amount': int(n_with_amt),
+                'eur': float(adhoc.loc[adhoc['amount_eur'].notna(), 'amount_eur'].sum())
+                       if 'amount_eur' in adhoc.columns else 0.0,
+            }
 
     # --- ETS (reported separately, not added to main total by default) ---
     ets_path = enrichment_dir / 'ets_matched_companies.csv'
     if not ets_path.exists():
         ets_path = enrichment_dir / 'ets_automotive_companies.csv'
-    ets = _load_enrichment_csv(ets_path, 'EU ETS')
+    ets = _load_enrichment_csv(ets_path, 'EU ETS', schema_key='ets_free_allocation')
     if len(ets) > 0 and 'total_eur_free' in ets.columns:
         stats['ets'] = {'rows': len(ets), 'eur': ets['total_eur_free'].sum(),
                         'note': 'Reported separately (implicit subsidy via free carbon allowances)'}
@@ -750,21 +1099,31 @@ def _dedup_fts_identical_transactions(df: pd.DataFrame, prog_map: dict) -> pd.Da
 # publications office) are intentionally excluded — they are not EU funding
 # programmes and would create false positives.
 #
-# National-language variants still partially missing (future work):
-#   ERDF: Italian 'fesr', Polish 'efrr', Romanian 'fedr'
-#   ESF: Czech 'esf', Hungarian 'esza'
-#   JTF: French 'ftr', Polish 'fundusz sprawiedliwej transformacji'
-#   See research/DEDUP_NOTES.md for the full backlog.
+# National-language coverage: expanded 2026-04-12 to close the gaps listed in
+# research/PIPELINE_AUDIT.md finding H1.  Each canonical fund now carries its
+# principal Polish, Czech, Hungarian, Romanian, Slovak, Slovenian, and Baltic
+# variants in addition to the EN/FR/DE/ES/IT forms.
 # ---------------------------------------------------------------------------
 _FUND_ALIASES: dict[str, set] = {
     # --- Cohesion / structural funds ---
-    'ERDF':       {'erdf', 'feder', 'efre', 'fesr', 'efrr',
-                   'european regional development'},
-    'ESF':        {'esf', 'esf+', 'esf plus', 'fse',
-                   'european social fund', 'youth employment initiative'},
+    'ERDF':       {'erdf', 'feder', 'efre', 'fesr', 'efrr', 'fedr',
+                   'european regional development',
+                   'europejski fundusz rozwoju regionalnego',
+                   'evropsky fond pro regionalni rozvoj',
+                   'europai regionalis fejlesztesi alap'},
+    'ESF':        {'esf', 'esf+', 'esf plus', 'fse', 'esza',
+                   'european social fund', 'youth employment initiative',
+                   'europejski fundusz spoleczny',
+                   'evropsky socialni fond',
+                   'europai szocialis alap'},
     'CF':         {'cohesion fund', 'fonds de cohesion', 'fonds de cohésion',
-                   'koh\u00e4sionsfonds'},
-    'JTF':        {'jtf', 'just transition'},
+                   'koh\u00e4sionsfonds', 'fundusz spojnosci',
+                   'fond soudrznosti', 'kohezios alap'},
+    'JTF':        {'jtf', 'just transition', 'ftr',
+                   'fonds pour une transition juste',
+                   'fundusz sprawiedliwej transformacji',
+                   'fond pro spravedlivou transformaci',
+                   'meltanyos atallasi alap'},
     'ESIF':       {'esif', 'structural and investment', 'structural funds'},
     'INTERREG':   {'interreg'},
 
@@ -778,17 +1137,41 @@ _FUND_ALIASES: dict[str, set] = {
                    'maritime, fisheries'},
 
     # --- Research / innovation ---
-    'HORIZON':    {'horizon 2020', 'horizon europe', 'h2020',
+    # Horizon Europe budget lines in FTS / CORDIS use the cluster naming
+    # scheme "Cluster N — <domain>"; raw-data audit (plan §4 / L3) found
+    # ~335M master rows carrying these cluster strings with no ERDF-style
+    # alias. Adding the cluster prefixes and the main ERC / MSCA / JRC
+    # research-overhead lines closes the biggest remaining FTS fund-
+    # attribution gap.
+    'HORIZON':    {'horizon 2020', 'horizon europe', 'h2020', 'horizon-',
                    'research framework programme', 'euratom',
                    'nuclear fission', 'joint research centre',
-                   'research programme for coal', 'research programme for steel'},
+                   'research programme for coal', 'research programme for steel',
+                   # --- Horizon Europe clusters (Pillar II) ---
+                   'cluster health',
+                   'cluster culture',
+                   'cluster civil security',
+                   'cluster digital',
+                   'cluster climate',
+                   'cluster food',
+                   'cluster industry',
+                   # --- Marie Skłodowska-Curie + ERC + widening ---
+                   'marie sklodowska', 'marie curie', 'msca',
+                   'european research council', 'erc grant',
+                   'widening participation', 'teaming', 'twinning',
+                   # --- Horizon operational / management lines ---
+                   'non-nuclear actions of jrc',
+                   'non nuclear actions of jrc',
+                   'completion of previous research programmes',
+                   'other management expenditure for research'},
     'EIC':        {'european innovation council', 'eic'},
     'INNOVFUND':  {'innovation fund', 'innovfund', 'innovation fund (if)'},
 
     # --- Transport / infrastructure / environment ---
     'CEF':        {'connecting europe facility', 'cef',
                    'trans-european networks', 'trans-european transport'},
-    'LIFE':       {'life+', 'programme for the environment and climate action',
+    'LIFE':       {'life+', 'life programme', 'programme life',
+                   'programme for the environment and climate action',
                    'environment and climate action',
                    'completion of previous programmes in the field of environment'},
 
@@ -818,7 +1201,12 @@ _FUND_ALIASES: dict[str, set] = {
 
 
 
-def _flag_cofinancing_overlaps(df: pd.DataFrame, year_win: int = 2) -> pd.DataFrame:
+def _flag_cofinancing_overlaps(
+    df: pd.DataFrame,
+    year_win: int = 2,
+    ratio_min: float = 0.01,
+    ratio_max: float = 1.50,
+) -> pd.DataFrame:
     """Flag TAM rows where a KOHESIO or RRF record exists for the same entity+country.
 
     TAM = total approved national state aid (EU co-financing + national share).
@@ -838,24 +1226,48 @@ def _flag_cofinancing_overlaps(df: pd.DataFrame, year_win: int = 2) -> pd.DataFr
 
     TAM rows are marked dc_preferred=False; KOHESIO/RRF rows stay dc_preferred=True.
     """
-    # Flat set of all known structural fund substrings (lowercase) from _FUND_ALIASES
+    # Flat set of all known structural fund substrings (lowercase) from _FUND_ALIASES.
+    # Compiled into a word-boundary alternation so short aliases ("dep", "esf",
+    # "eic", "cef", "ipa") do not false-positive on unrelated substrings like
+    # "participation" → "ipa" or "developpement" → "dep". Sorted longest-first
+    # so the alternation prefers the most specific match.
     _known_fund_aliases: set = {alias for aliases in _FUND_ALIASES.values() for alias in aliases}
+    _fund_alias_re = re.compile(
+        r'(?<!\w)(?:' + '|'.join(
+            re.escape(a) for a in sorted(_known_fund_aliases, key=len, reverse=True)
+        ) + r')(?!\w)',
+        re.IGNORECASE,
+    )
 
     def _kohesio_fund_is_structural(fund_val) -> bool:
         """Return True if fund_val is empty (unknown) or matches a known EU structural fund."""
         s = str(fund_val or '').lower().strip()
         if not s:
             return True  # no fund info — do not discard on this basis
-        return any(alias in s for alias in _known_fund_aliases)
+        return bool(_fund_alias_re.search(s))
 
     join_cols = ['match_reference_name', 'country']
     if 'match_reference_name' not in df.columns:
         return df
-    tam = df[df['source'] == 'TAM'][join_cols + ['source_record_id', 'year', 'amount_eur']].copy()
+    # Only consider TAM rows not yet flagged by PDF-backed dedup (which is authoritative).
+    # This makes the heuristic a true fallback — it only fires on residual unflagged TAM rows.
+    tam_mask = (df['source'] == 'TAM') & df['dc_preferred']
+    tam = df[tam_mask][join_cols + ['source_record_id', 'year', 'amount_eur']].copy()
     if tam.empty:
         return df
 
-    for preferred_src in ['KOHESIO', 'RRF']:
+    # M4 cleanup (2026-04-14): the historical 'RRF' entry in this loop
+    # never fires in practice. The EC RRF source writes
+    # beneficiary_name = pd.NA on every row (see
+    # src/harmonization/rrf.py) so no RRF row is ever assigned a
+    # match_reference_name and the join below returns zero matches.
+    # National-level RRF beneficiary data comes through
+    # rrf_italia_domani.py and rrf_national_top100.py — those rows
+    # use source codes like 'RRF_IT' and 'RRF_NAT_TOP100' and do not
+    # need the heuristic co-financing join against TAM. Removed from
+    # the loop to prevent future maintainers from assuming a live
+    # path exists. Plan audit H7 + M4.
+    for preferred_src in ['KOHESIO']:
         src_cols = join_cols + ['source_record_id', 'year', 'amount_eur']
         # Include 'fund' column for KOHESIO if available — used for structural-fund filter
         if preferred_src == 'KOHESIO' and 'fund' in df.columns:
@@ -875,12 +1287,12 @@ def _flag_cofinancing_overlaps(df: pd.DataFrame, year_win: int = 2) -> pd.DataFr
         if merged.empty:
             continue
 
-        # Plausibility ratio check — KOHESIO should be 1–150% of TAM
+        # Plausibility ratio check — KOHESIO should be in [ratio_min, ratio_max] × TAM
         a = pd.to_numeric(merged['amount_eur_tam'], errors='coerce')
         b = pd.to_numeric(merged['amount_eur_other'], errors='coerce')
         valid = a.notna() & b.notna() & (a > 0) & (b > 0)
         ratio = (b / a).where(valid)
-        plausible = valid & (ratio >= 0.01) & (ratio <= 1.50)
+        plausible = valid & (ratio >= ratio_min) & (ratio <= ratio_max)
         merged = merged[plausible].copy()
         if merged.empty:
             continue
@@ -900,8 +1312,14 @@ def _flag_cofinancing_overlaps(df: pd.DataFrame, year_win: int = 2) -> pd.DataFr
         ))
         flag_str = f'cofinancing_overlap:tam_{preferred_src.lower()}'
         mask = (df['source'] == 'TAM') & df['source_record_id'].astype(str).isin(tam_ids)
-        df.loc[mask, 'dc_preferred'] = False
-        df.loc[mask, 'dc_flag'] = df.loc[mask, 'dc_flag'].map(
+        # §6.5 / plan audit A-6: heuristic dedup is AUDIT-ONLY. We no
+        # longer toggle ``dc_preferred`` — we set ``heuristic_flag`` so
+        # the row stays in the headline view but is visible to readers
+        # of the audit CSV. The PDF-grounded ``_flag_pdf_cofin_overlaps``
+        # remains the only path that can exclude a row from the headline.
+        if 'heuristic_flag' not in df.columns:
+            df['heuristic_flag'] = ''
+        df.loc[mask, 'heuristic_flag'] = df.loc[mask, 'heuristic_flag'].map(
             lambda x: (x + '|' if x else '') + flag_str
         )
         df.loc[mask, 'cofinancing_partner_id'] = (
@@ -1165,9 +1583,10 @@ def consolidate(
     prefix: str = 'match',
     company_list_csv: Path | None = None,
     aliases_json: Path | None = None,
-    run_pdf_enrichment: bool = False,
+    run_pdf_enrichment: bool = True,
     pdf_cache_dir: Path | None = None,
     use_llm: bool = False,
+    dedup_config: DedupConfig | None = None,
 ) -> pd.DataFrame:
     """Run the full generic consolidation pipeline.
 
@@ -1186,12 +1605,19 @@ def consolidate(
         Column prefix used by the matcher (e.g., 'automotive', 'match').
     run_pdf_enrichment : bool
         If True, download and parse SA decision PDFs to detect EU fund co-financing
-        for TAM rows. Results are used by _flag_pdf_cofin_overlaps(). Default False.
+        for TAM rows. Results are used by _flag_pdf_cofin_overlaps(). Default True
+        (aligned with the CLI default in run_pipeline.py; pass False to skip).
     pdf_cache_dir : Path | None
-        Directory to cache downloaded SA PDFs. Defaults to output_dir/sa_decisions.
+        Directory to cache downloaded SA PDFs. Defaults to a repo-level cache at
+        REPO_ROOT/data/cache/sa_decisions so that PDFs accumulate across runs.
     use_llm : bool
         If True, use Claude Haiku as Tier 3 fallback in PDF enrichment when regex
         finds no signal. Requires ANTHROPIC_API_KEY. Only used if run_pdf_enrichment=True.
+    dedup_config : DedupConfig | None
+        Optional override for cross-source dedup thresholds (year windows, amount
+        ratio bands, IPCEI tolerance). Defaults to DEFAULT_DEDUP_CONFIG, which
+        matches the previously hardcoded values. See DedupConfig for the full
+        list of tunables.
 
     Returns
     -------
@@ -1204,6 +1630,12 @@ def consolidate(
     t0 = time.time()
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
+
+    # L2: resolve dedup configuration. The default preserves the legacy
+    # hardcoded thresholds, so behaviour is unchanged unless a caller passes
+    # an explicit DedupConfig override.
+    if dedup_config is None:
+        dedup_config = DEFAULT_DEDUP_CONFIG
 
     ref_col = f'{prefix}_reference_name'
     type_col = f'{prefix}_type'
@@ -1241,17 +1673,52 @@ def consolidate(
     # Activate with: run_pipeline.py --pdf-enrichment [--use-llm]
     # ------------------------------------------------------------------
     if run_pdf_enrichment:
-        log.info("\nPhase 2c: SA PDF co-financing enrichment...")
+        log.info("\nPhase 2c: SA PDF co-financing enrichment... (ON — pass "
+                 "run_pdf_enrichment=False or CLI --no-pdf-enrichment to skip)")
         from src.enrichment.sa_pdf_parser import SACofinParser
         from src.enrichment.sa_case_lookup import SACaseLookup
-        # Resolve repo root: match_log_csv is data/processed/match_output/match_log.csv
-        # → .parent×4 = repo root
-        _repo_root = Path(match_log_csv).resolve().parent.parent.parent.parent
-        _sa_json = _repo_root / 'case-data-SA.json'
+        # Resolve repo root by walking up from match_log_csv until we find case-data-SA.json
+        # (depth varies: default pipeline puts it at .parent×4, sector subfolders at .parent×5)
+        _candidate = Path(match_log_csv).resolve()
+        _sa_json = None
+        for _ in range(8):
+            _candidate = _candidate.parent
+            if (_candidate / 'case-data-SA.json').exists():
+                _sa_json = _candidate / 'case-data-SA.json'
+                break
+        if _sa_json is None:
+            _sa_json = Path(match_log_csv).resolve().parent.parent.parent.parent / 'case-data-SA.json'
+
+        # Ensure sa_case column exists — normalise TAM source_record_id to SA.XXXXX format
+        from src.enrichment.sa_case_lookup import normalise_sa
+        if 'sa_case' not in combined.columns:
+            combined['sa_case'] = ''
+        tam_mask = combined['source'] == 'TAM'
+        combined.loc[tam_mask, 'sa_case'] = (
+            combined.loc[tam_mask, 'source_record_id'].astype(str).map(normalise_sa)
+        )
+
         sa_lookup = SACaseLookup(_sa_json).load()
-        pdf_cache = Path(pdf_cache_dir) if pdf_cache_dir else (output_dir / 'sa_decisions')
+        # PDF cache defaults to a repo-level shared directory so that downloaded
+        # decision PDFs accumulate across runs — SA codes are immutable, so
+        # re-running on the same (or overlapping) company lists pays the download
+        # cost only once. Override with the `pdf_cache_dir` argument if needed.
+        if pdf_cache_dir:
+            pdf_cache = Path(pdf_cache_dir)
+        else:
+            try:
+                from src.paths import REPO_ROOT as _REPO
+                pdf_cache = _REPO / 'data' / 'cache' / 'sa_decisions'
+            except Exception:
+                pdf_cache = output_dir / 'sa_decisions'
+        pdf_cache.mkdir(parents=True, exist_ok=True)
+        log.info(f"  PDF cache: {pdf_cache}")
         parser = SACofinParser(cache_dir=pdf_cache, use_llm=use_llm)
         combined = parser.enrich_dataframe(combined, sa_lookup)
+    else:
+        log.info("\nPhase 2c: SA PDF co-financing enrichment... SKIPPED "
+                 "(run_pdf_enrichment=False). Cross-source dedup will fall back "
+                 "to the heuristic amount-ratio path only.")
 
     # ------------------------------------------------------------------
     # Phase 2b: Reference name normalisation + cross-source dedup
@@ -1267,6 +1734,12 @@ def consolidate(
     # Initialise dedup columns
     combined['dc_flag'] = ''
     combined['dc_preferred'] = True
+    # heuristic_flag is a *separate* audit column populated by the
+    # amount-ratio heuristic in `_flag_cofinancing_overlaps`. It does
+    # NOT touch `dc_preferred`, so heuristic-flagged rows remain in
+    # the headline view. This enforces the §6.5 principle: only
+    # document-grounded evidence moves a row out of the headline.
+    combined['heuristic_flag'] = ''
     combined['attribution_type'] = 'direct'
     combined['cofinancing_partner_id'] = ''
 
@@ -1286,11 +1759,26 @@ def consolidate(
         combined['match_reference_name'] = combined[ref_col]
 
     # Apply dedup logic (each function sets dc_preferred=False + dc_flag on affected rows)
+    # Priority: PDF-backed dedup is authoritative — runs first.
+    # Heuristic is fallback only — skips TAM rows already flagged by PDF.
+    # L2: thresholds come from DedupConfig so a caller can override any single
+    # value without touching the function bodies.
     combined = _dedup_fts_identical_transactions(combined, prog_map)
-    combined = _flag_cofinancing_overlaps(combined)
-    combined = _flag_pdf_cofin_overlaps(combined)   # PDF-backed; no-op if enrichment not run
+    combined = _flag_pdf_cofin_overlaps(
+        combined, year_win=dedup_config.pdf_cofin_year_window,
+    )
+    combined = _flag_cofinancing_overlaps(
+        combined,
+        year_win=dedup_config.heuristic_cofin_year_window,
+        ratio_min=dedup_config.heuristic_cofin_ratio_min,
+        ratio_max=dedup_config.heuristic_cofin_ratio_max,
+    )
     combined = _dedup_same_record_multicountry(combined)
-    combined = _flag_ipcei_tam_overlap(combined)
+    combined = _flag_ipcei_tam_overlap(
+        combined,
+        amount_tol=dedup_config.ipcei_tam_amount_tolerance,
+        year_win=dedup_config.ipcei_tam_year_window,
+    )
     combined = _add_attribution_type(combined, prefix=prefix)
 
     n_not_preferred = (~combined['dc_preferred']).sum()
@@ -1308,15 +1796,58 @@ def consolidate(
     combined = assess_match_quality(combined, prefix=prefix)
 
     # ------------------------------------------------------------------
-    # Phase 4: GGE calculation
+    # Phase 4: GGE calculation + face/gge column split
     # ------------------------------------------------------------------
-    log.info("\nPhase 4: Computing GGE (Gross Grant Equivalent)...")
-    combined['gge_rate'] = combined.apply(_gge_rate, axis=1)
-    combined['amount_gge'] = combined['amount_eur'] * combined['gge_rate']
-    total_face = combined['amount_eur'].sum()
-    total_gge = combined['amount_gge'].sum()
-    log.info(f"  Face value: EUR {total_face/1e9:.1f}B")
-    log.info(f"  GGE value:  EUR {total_gge/1e9:.1f}B")
+    # We publish two parallel headline columns:
+    #   amount_eur_face  — raw EUR face value from the source. Always
+    #                      populated; this is the headline number the
+    #                      paper reports.
+    #   amount_eur_gge   — face value multiplied by the instrument's
+    #                      GGE rate (grant 1.0, loan 0.15, guarantee
+    #                      0.10, ...). NaN for rows whose instrument
+    #                      class is not in GGE_RATES — under the §6.5
+    #                      no-invention principle we do not fabricate
+    #                      a GGE for an unclassified instrument.
+    # ``gge_rate_source`` is 'measured' / 'measured_repayable' /
+    # 'unknown' so downstream users can filter.
+    # ``amount_eur`` stays populated as an alias of ``amount_eur_face``
+    # for backwards compatibility with existing analysis code.
+    # ------------------------------------------------------------------
+    log.info("\nPhase 4: Computing GGE + publishing face/GGE columns...")
+    _GGE_UNKNOWN_COUNTS.clear()
+    _rate_source_pairs = combined.apply(_gge_rate_and_source, axis=1, result_type='expand')
+    combined['gge_rate'] = _rate_source_pairs[0]
+    combined['gge_rate_source'] = _rate_source_pairs[1]
+    combined['amount_eur_face'] = combined['amount_eur']
+    combined['amount_eur_gge'] = combined['amount_eur_face'] * combined['gge_rate']
+    # Keep ``amount_gge`` populated for legacy consumers (same values).
+    combined['amount_gge'] = combined['amount_eur_gge']
+    total_face = combined['amount_eur_face'].sum()
+    total_gge = combined['amount_eur_gge'].sum()
+    n_measured = int((combined['gge_rate_source'] == 'measured').sum())
+    n_repayable = int((combined['gge_rate_source'] == 'measured_repayable').sum())
+    n_unknown = int((combined['gge_rate_source'] == 'unknown').sum())
+    log.info(f"  Face value: EUR {total_face/1e9:.1f}B (all rows)")
+    log.info(
+        f"  GGE value:  EUR {total_gge/1e9:.1f}B "
+        f"(measured={n_measured:,}, repayable={n_repayable:,}, unknown={n_unknown:,})"
+    )
+    if _GGE_UNKNOWN_COUNTS:
+        total_unknown = sum(_GGE_UNKNOWN_COUNTS.values())
+        log.warning(
+            f"  GGE: {total_unknown:,} rows have unknown/missing "
+            f"financial_instrument_class; amount_eur_gge is NaN for these rows "
+            f"(they still appear in face-value totals). Classify these instruments "
+            f"in harmonization or add them to GGE_RATES."
+        )
+        for inst, count in sorted(_GGE_UNKNOWN_COUNTS.items(), key=lambda x: -x[1]):
+            eur_mask = combined['financial_instrument_class'].fillna('').str.lower().str.strip().eq(
+                inst if inst != '<empty>' else ''
+            )
+            eur_affected = combined.loc[eur_mask, 'amount_eur_face'].sum()
+            log.warning(
+                f"    instrument_class={inst!r}: {count:,} rows, EUR {eur_affected/1e6:.0f}M face"
+            )
 
     # ------------------------------------------------------------------
     # Phase 5: Parent group assignment (optional)
@@ -1383,10 +1914,63 @@ def consolidate(
             log.warning(f"  hq_country inference skipped: {e}")
 
     # ------------------------------------------------------------------
-    # Phase 6: Summary tables
+    # Phase 5c: Split the consolidated frame into the deduped "headline"
+    # view and the full "audit" view BEFORE building summary tables or
+    # concentration metrics. This fixes plan audit finding L1 and the
+    # §6.5 no-invention principle: headline numbers must correspond to
+    # (a) rows the pipeline itself has not flagged as duplicates, and
+    # (b) rows that are not tagged as low-confidence matches.
+    #
+    # The headline frame is built by this filter chain:
+    #   1. ``dc_preferred == True`` — excludes every row that any dedup
+    #      step (PDF-grounded, heuristic fallback, FTS identical-txn, or
+    #      IPCEI-TAM overlap) marked as a duplicate. This is the single
+    #      biggest correctness fix in the whole audit.
+    #   2. ``match_quality`` not in the suspect set — excludes
+    #      ``suspect_description_only``, ``suspect_eib_title``, and any
+    #      future ``suspect_contextual_generic`` flag.
     # ------------------------------------------------------------------
-    log.info("\nPhase 6: Building summary tables...")
-    tables = build_summary_tables(combined, group_summary=group_summary, prefix=prefix)
+    log.info("\nPhase 5c: Splitting headline vs audit views...")
+    _dc_mask = combined['dc_preferred'] if 'dc_preferred' in combined.columns else True
+    _suspect_values = {'suspect_description_only', 'suspect_eib_title',
+                       'suspect_contextual_generic'}
+    if 'match_quality' in combined.columns:
+        _mq_mask = ~combined['match_quality'].fillna('').isin(_suspect_values)
+    else:
+        _mq_mask = True
+    # Anonymised / bucket sentinel filter. Populated by the master
+    # builder via ``apply_anonymised_column`` on every source. Default
+    # to False when the column is missing (older master parquets).
+    if 'is_anonymised' in combined.columns:
+        _anon_mask = ~combined['is_anonymised'].fillna(False).astype(bool)
+    else:
+        _anon_mask = True
+    headline_mask = _dc_mask & _mq_mask & _anon_mask
+    combined_audit = combined  # full, unfiltered — preserved for publication
+    combined_headline = combined_audit[headline_mask].copy()
+    n_excluded_dc = int((~_dc_mask).sum()) if isinstance(_dc_mask, pd.Series) else 0
+    n_excluded_mq = int((~_mq_mask).sum()) if isinstance(_mq_mask, pd.Series) else 0
+    n_excluded_anon = int((~_anon_mask).sum()) if isinstance(_anon_mask, pd.Series) else 0
+    log.info(
+        f"  headline: {len(combined_headline):,} rows / "
+        f"audit: {len(combined_audit):,} rows "
+        f"(dc_preferred=False: {n_excluded_dc:,}, suspect match_quality: "
+        f"{n_excluded_mq:,}, anonymised: {n_excluded_anon:,})"
+    )
+    if len(combined_audit):
+        face_full = float(combined_audit['amount_eur'].sum())
+        face_headline = float(combined_headline['amount_eur'].sum())
+        delta_pct = (face_full - face_headline) / face_full * 100 if face_full else 0
+        log.info(
+            f"  face value: headline EUR {face_headline/1e9:.1f}B vs "
+            f"audit EUR {face_full/1e9:.1f}B ({delta_pct:+.1f}% delta dropped)"
+        )
+
+    # ------------------------------------------------------------------
+    # Phase 6: Summary tables (headline view only)
+    # ------------------------------------------------------------------
+    log.info("\nPhase 6: Building summary tables (headline view)...")
+    tables = build_summary_tables(combined_headline, group_summary=group_summary, prefix=prefix)
 
     for name, tbl in tables.items():
         if isinstance(tbl, pd.DataFrame):
@@ -1394,13 +1978,13 @@ def consolidate(
             log.info(f"  {name}.csv ({len(tbl)} rows)")
 
     # ------------------------------------------------------------------
-    # Phase 7: Concentration metrics
+    # Phase 7: Concentration metrics (headline view only)
     # ------------------------------------------------------------------
-    log.info("\nPhase 7: Concentration metrics...")
+    log.info("\nPhase 7: Concentration metrics (headline view)...")
     metrics = {}
-    metrics['entity_level'] = build_concentration_metrics(combined, ref_col)
-    if group_summary is not None and 'parent_group' in combined.columns:
-        metrics['group_level'] = build_concentration_metrics(combined, 'parent_group')
+    metrics['entity_level'] = build_concentration_metrics(combined_headline, ref_col)
+    if group_summary is not None and 'parent_group' in combined_headline.columns:
+        metrics['group_level'] = build_concentration_metrics(combined_headline, 'parent_group')
 
     log.info(f"  Entity: HHI={metrics['entity_level']['hhi']}, "
              f"Top5={metrics['entity_level']['top5_pct']}%, "
@@ -1415,11 +1999,28 @@ def consolidate(
 
     # ------------------------------------------------------------------
     # Phase 8: Save outputs
+    #
+    # We now publish TWO CSVs:
+    #   consolidated_matches.csv       — headline view; every row
+    #                                    contributes to published totals.
+    #   consolidated_matches_audit.csv — audit view; every matched row
+    #                                    INCLUDING rows flagged as
+    #                                    duplicate / suspect / heuristic-
+    #                                    only. Readers who want to see
+    #                                    what the pipeline excluded and
+    #                                    why read this one.
+    # The headline CSV is the one the methodology paper cites.
     # ------------------------------------------------------------------
     log.info("\nPhase 8: Saving outputs...")
-    combined = _dedup_exact_rows(combined, ref_col=ref_col)
-    combined.to_csv(output_dir / 'consolidated_matches.csv', index=False)
-    log.info(f"  consolidated_matches.csv ({len(combined):,} rows)")
+    combined_headline = _dedup_exact_rows(combined_headline, ref_col=ref_col)
+    combined_audit = _dedup_exact_rows(combined_audit, ref_col=ref_col)
+    combined_headline.to_csv(output_dir / 'consolidated_matches.csv', index=False)
+    combined_audit.to_csv(output_dir / 'consolidated_matches_audit.csv', index=False)
+    log.info(f"  consolidated_matches.csv       ({len(combined_headline):,} rows — headline)")
+    log.info(f"  consolidated_matches_audit.csv ({len(combined_audit):,} rows — audit)")
+    # Keep ``combined`` bound to the headline view for the rest of the
+    # function so the end-of-run summary reports headline numbers.
+    combined = combined_headline
 
     if group_summary is not None:
         group_summary.to_csv(output_dir / 'group_summary.csv', index=False)

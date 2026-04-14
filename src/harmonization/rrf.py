@@ -111,7 +111,13 @@ def _standardize(df: pd.DataFrame, log: logging.Logger) -> pd.DataFrame:
     out['source'] = 'RRF'
     out['source_record_id'] = df.get('Measure Reference', df.index).astype(str)
     out['granularity'] = 'measure'
-    out['beneficiary_name'] = None  # No beneficiary in RRF (measure-level data)
+    # RRF is measure-level — no individual beneficiaries in the source. We
+    # emit ``pd.NA`` rather than ``None`` so the column round-trips through
+    # parquet as a real null rather than being coerced to an empty string.
+    # Downstream code that filters via ``.isna()`` / ``.notna()`` then sees
+    # RRF correctly as "no beneficiary" instead of "empty beneficiary".
+    # Plan audit finding L8 / D9: H7's blind-spot silent-null bug.
+    out['beneficiary_name'] = pd.NA
     out['country'] = df['Country'].apply(standardize_country) if 'Country' in df.columns else ''
     out['amount_eur'] = df.get('Costs', np.nan)
     out['amount_type'] = df['Loans/Grants'].apply(_rrf_amount_type) if 'Loans/Grants' in df.columns else 'budget_allocation'
