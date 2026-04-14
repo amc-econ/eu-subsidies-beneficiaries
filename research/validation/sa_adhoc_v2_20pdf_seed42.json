@@ -1,0 +1,196 @@
+{
+ "sample_size": 20,
+ "seed": 42,
+ "extracted": 6,
+ "suspect_fallthrough": 2,
+ "failure_buckets": {
+  "no_EUR_mention": 4,
+  "ladder_miss_format": 6,
+  "extracted": 6,
+  "non_EUR_currency:pln": 1,
+  "redaction_fallthrough": 2,
+  "non_EUR_currency:gbp": 1
+ },
+ "results": [
+  {
+   "sa_code": "SA.27530",
+   "title": "Subvention pluriannuelle pour France Télévisions",
+   "extracted_beneficiary": "Subvention pluriannuelle pour France Télévisions",
+   "amount_eur": null,
+   "amount_confidence": "not_extracted",
+   "evidence_snippet": "",
+   "bucket": "no_EUR_mention"
+  },
+  {
+   "sa_code": "SA.19046",
+   "title": "Aid toward VAOP Oud Papier",
+   "extracted_beneficiary": "Aid toward VAOP Oud Papier",
+   "amount_eur": null,
+   "amount_confidence": "not_extracted",
+   "evidence_snippet": "",
+   "bucket": "ladder_miss_format"
+  },
+  {
+   "sa_code": "SA.36814",
+   "title": "ad hoc aid to BNY Mellon Poland Sp. z o.o.",
+   "extracted_beneficiary": "BNY Mellon Poland Sp. z o.o.",
+   "amount_eur": 657507.0,
+   "amount_confidence": "regex_exact",
+   "evidence_snippet": "points 57 and 58 thereof. d. The total aid amounts to PLN 2 790 000 (approx. EUR 657 507) in nominal value and to PLN 2 709 308 (approx. EUR 638 491) in discoun",
+   "bucket": "extracted"
+  },
+  {
+   "sa_code": "SA.34982",
+   "title": "Individual aid to GAZ-SYSTEM S.A. for gas transmission networks in Poland",
+   "extracted_beneficiary": "Individual aid to GAZ",
+   "amount_eur": null,
+   "amount_confidence": "not_extracted",
+   "evidence_snippet": "",
+   "bucket": "non_EUR_currency:pln"
+  },
+  {
+   "sa_code": "SA.34235",
+   "title": "Gas pipeline Rembelszczyzna - Gustorzyn (phase III) ",
+   "extracted_beneficiary": "Gas pipeline Rembelszczyzna",
+   "amount_eur": null,
+   "amount_confidence": "not_extracted",
+   "evidence_snippet": "",
+   "bucket": "ladder_miss_format"
+  },
+  {
+   "sa_code": "SA.29085",
+   "title": "Energy saving by strip casting technology for light steels of Salzgitter Flachst",
+   "extracted_beneficiary": "Energy saving by strip casting technology for light steels of Salzgitter Flachstahl GmbH",
+   "amount_eur": 19100000.0,
+   "amount_confidence": "regex_exact",
+   "evidence_snippet": "EUR 43.0 million. Finally, the proposed aid amount of EUR 19.1 million would result in an aid intensity of 44%. Profitability over the lifetime 25. Germany indi",
+   "bucket": "extracted"
+  },
+  {
+   "sa_code": "SA.21693",
+   "title": "R&D aid to ITPitp for the TRNT 1000 project ",
+   "extracted_beneficiary": "R&D aid to ITPitp for the TRNT 1000 project",
+   "amount_eur": null,
+   "amount_confidence": "suspect_fallthrough",
+   "evidence_snippet": "13 2 001 5 2.5. The aid instrument (18) The aid amount is € 27.85 million. The aid will then be reimbursed without any interest, in the schedule presented below",
+   "bucket": "redaction_fallthrough"
+  },
+  {
+   "sa_code": "SA.21928",
+   "title": "Bio Generation Ventures Fund",
+   "extracted_beneficiary": "Bio Generation Ventures Fund",
+   "amount_eur": 6000000.0,
+   "amount_confidence": "regex_exact",
+   "evidence_snippet": "s involved (16) NGI/NWO will provide an initial financing of up to EUR 6 million in the form of a profit sharing loan. Thus, up to 46.15% of the Fund's capital,",
+   "bucket": "extracted"
+  },
+  {
+   "sa_code": "SA.64651",
+   "title": " IPCEI Hydrogen Technology - Hy2Tech - GREECE",
+   "extracted_beneficiary": "IPCEI Hydrogen Technology",
+   "amount_eur": null,
+   "amount_confidence": "not_extracted",
+   "evidence_snippet": "",
+   "bucket": "no_EUR_mention"
+  },
+  {
+   "sa_code": "SA.18478",
+   "title": "MSF 2002-Aid to SAICA - Zaragoza-Spain",
+   "extracted_beneficiary": "MSF 2002",
+   "amount_eur": 12800000.0,
+   "amount_confidence": "regex_exact",
+   "evidence_snippet": "mount and intensity of aid granted (11) The aid amounts to EUR 12 800 000 in nominal value and will be paid out in yearly instalments from 2004 until 2007. (12)",
+   "bucket": "extracted"
+  },
+  {
+   "sa_code": "SA.17943",
+   "title": "MSF 2002-Opel Zaragoza/Spain",
+   "extracted_beneficiary": "MSF 2002",
+   "amount_eur": 6418759.0,
+   "amount_confidence": "regex_exact",
+   "evidence_snippet": "mount and intensity of aid granted (10) The aid amounts to EUR 6 418 759 in nominal value and will be paid out in yearly instalments (EUR 3 000 000 in 2003, EUR",
+   "bucket": "extracted"
+  },
+  {
+   "sa_code": "SA.23602",
+   "title": "Aid to mining company Ellinikos Xrysos  ",
+   "extracted_beneficiary": "mining company Ellinikos Xrysos",
+   "amount_eur": null,
+   "amount_confidence": "not_extracted",
+   "evidence_snippet": "",
+   "bucket": "ladder_miss_format"
+  },
+  {
+   "sa_code": "SA.33984",
+   "title": "Green Investment Bank",
+   "extracted_beneficiary": "Green Investment Bank",
+   "amount_eur": null,
+   "amount_confidence": "not_extracted",
+   "evidence_snippet": "",
+   "bucket": "non_EUR_currency:gbp"
+  },
+  {
+   "sa_code": "SA.31156",
+   "title": "Post Office Limited (POL) Continuation of Network Subsidy Payment and Working Ca",
+   "extracted_beneficiary": "Post Office Limited",
+   "amount_eur": null,
+   "amount_confidence": "not_extracted",
+   "evidence_snippet": "",
+   "bucket": "ladder_miss_format"
+  },
+  {
+   "sa_code": "SA.19880",
+   "title": "Niederrhein-Weeze airport (Weeze)",
+   "extracted_beneficiary": "Niederrhein",
+   "amount_eur": null,
+   "amount_confidence": "suspect_fallthrough",
+   "evidence_snippet": "the need for refinancing. For the first loan amounting to EUR 13 million granted to FN GmbH in 2003, EEL GmbH has refinanced itself through a ways and means adv",
+   "bucket": "redaction_fallthrough"
+  },
+  {
+   "sa_code": "SA.30951",
+   "title": "$ - CCS project in Rotterdam harbour area",
+   "extracted_beneficiary": "",
+   "amount_eur": null,
+   "amount_confidence": "not_extracted",
+   "evidence_snippet": "",
+   "bucket": "no_EUR_mention"
+  },
+  {
+   "sa_code": "SA.64646",
+   "title": "IPCEI Hydrogen Technology - Hy2Tech – ESTONIA",
+   "extracted_beneficiary": "IPCEI Hydrogen Technology",
+   "amount_eur": null,
+   "amount_confidence": "not_extracted",
+   "evidence_snippet": "",
+   "bucket": "no_EUR_mention"
+  },
+  {
+   "sa_code": "SA.36007",
+   "title": "December 2012 Recapitalisation of National Bank of Greece",
+   "extracted_beneficiary": "December 2012 Recapitalisation of National Bank of Greece",
+   "amount_eur": 7430000000.0,
+   "amount_confidence": "regex_exact",
+   "evidence_snippet": "ank. On 28 May 2012, the HFSF granted a bridge recapitalisation of EUR 7 430 million to the Bank (\"the first bridge recapitalisation\"). (11) In May 2012, the Gr",
+   "bucket": "extracted"
+  },
+  {
+   "sa_code": "SA.102811",
+   "title": "IPCEI Hydrogen Hy2Infra - Slovakia",
+   "extracted_beneficiary": "IPCEI Hydrogen Hy2Infra",
+   "amount_eur": null,
+   "amount_confidence": "not_extracted",
+   "evidence_snippet": "",
+   "bucket": "ladder_miss_format"
+  },
+  {
+   "sa_code": "SA.38132",
+   "title": "PSO compensation to ARFEA",
+   "extracted_beneficiary": "PSO compensation to ARFEA",
+   "amount_eur": null,
+   "amount_confidence": "not_extracted",
+   "evidence_snippet": "",
+   "bucket": "ladder_miss_format"
+  }
+ ]
+}
