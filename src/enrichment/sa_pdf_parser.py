@@ -1038,6 +1038,403 @@ class SACofinParser:
         return None
 
 
+    # ------------------------------------------------------------------
+    # Technology keyword extraction (for Output 1 — text attribution)
+    # ------------------------------------------------------------------
+
+    # Maps technology sector → list of regex patterns (case-insensitive).
+    # Patterns are designed to match within EC state aid decision text.
+    # ── Tech keyword patterns ──────────────────────────────────────────────
+    # Two tiers: 'strong' patterns are highly specific to the sector;
+    # 'moderate' patterns are plausible but could appear in generic energy
+    # policy preambles. detect_tech_keywords() weights them differently.
+    # Multilingual coverage: EN, DE, FR, ES, IT, NL, PL, DA, FI, SV, CS/SK.
+    TECH_KEYWORD_PATTERNS: dict = {
+        'wind': {
+            'strong': [
+                r'\bwind\s*(energy|power|farm|turbine|park|offshore|onshore)\b',
+                r'\boffshore\s+wind\b', r'\bonshore\s+wind\b',
+                r'\bwind\s+generation\b',
+                # DE
+                r'\bwindenergie\b', r'\bwindkraft(?:anlage)?\b', r'\bwindpark\b',
+                # FR
+                r'\b[eé]olien(?:ne)?s?\b', r'\bparc\s+[eé]olien\b',
+                # ES
+                r'\bparque\s+e[oó]lico\b', r'\benerg[ií]a\s+e[oó]lica\b',
+                # NL
+                r'\bwindmolenpark\b',
+                # DA/SV
+                r'\bvindkraft\b', r'\bvindenergi\b', r'\bvindm[oø]lle\b',
+                # FI
+                r'\btuulivoima\b',
+                # PL
+                r'\bfarma?\s+wiatrow[aey]\b', r'\benergi[aą]\s+wiatrow[aą]\b',
+            ],
+            'moderate': [
+                r'\brenewable\s+energy\b', r'\berneuerbare\s+energie\b',
+                r'\b[eé]nergie\s+renouvelable\b',
+                r'\benerg[ií]as?\s+renovable\b',
+                r'\bclean\s+energy\b', r'\bgreen\s+energy\b',
+                r'\belectricity\s+generation\b',
+                r'\bvedvarende\s+energi\b',  # DA
+            ],
+        },
+        'solar': {
+            'strong': [
+                r'\bsolar\s*(energy|power|panel|cell|module|photovoltaic|pv)\b',
+                r'\bphotovoltaic\b', r'\b(?:PV|CSP)\s+(plant|module|installation|farm)\b',
+                r'\bsolar\s+(?:farm|park)\b',
+                # DE
+                r'\bsolarenergie\b', r'\bphotovoltaik\b', r'\bsolaranlage\b',
+                # FR
+                r'\bsolaire\b', r'\bphotovolta[iï]que\b',
+                # ES/IT
+                r'\bfotovoltaic[ao]?\b',
+                # PL
+                r'\bfotowoltaic\w*\b',
+            ],
+            'moderate': [
+                r'\brenewable\s+energy\b', r'\berneuerbare\s+energie\b',
+                r'\b[eé]nergie\s+renouvelable\b',
+                r'\bclean\s+energy\b', r'\bgreen\s+energy\b',
+                r'\belectricity\s+generation\b',
+            ],
+        },
+        'hydrogen': {
+            'strong': [
+                r'\bhydrogen\b', r'\belectrolys(?:er|is|eur)\b', r'\belectrolyzer\b',
+                r'\bfuel\s+cell\b', r'\bgreen\s+hydrogen\b',
+                r'\bpower.to.(?:gas|x|hydrogen)\b',
+                r'\bipcei\s+hy2(?:tech|use|infra|move)\b',
+                # DE
+                r'\bwasserstoff\b', r'\belektrolyse\b', r'\bbrennstoffzelle\b',
+                # FR
+                r'\bhydrog[eè]ne\b', r'\bpile\s+[aà]\s+combustible\b',
+                # ES
+                r'\bhidr[oó]geno\b',
+                # IT
+                r'\bidrogeno\b',
+                # PL
+                r'\bwod[oó]r\b', r'\belektrolizer\b',
+                # NL
+                r'\bwaterstof\b',
+            ],
+            'moderate': [
+                r'\bdecarboni[sz]\w*\b', r'\bclean\s+energy\b',
+                r'\benergy\s+transition\b',
+                r'\bgreen\s+gas\b',
+            ],
+        },
+        'nuclear': {
+            'strong': [
+                r'\bnuclear\b', r'\batomic\s+energy\b', r'\bSMR\b',
+                r'\bfission\b', r'\breactor\b', r'\buranium\b',
+                # FR
+                r'\bnucl[eé]aire\b',
+                # DE
+                r'\bnuklear\b', r'\bkernkraft\b', r'\bkernenergie\b', r'\batomkraft\b',
+                r'\bnuclear\s+(?:decommission|waste)\b',
+                r'\bspent\s+fuel\b', r'\buran(?:ium)?\b',
+                # FI
+                r'\bydinvoima\b', r'\bydinenergia\b',
+                # CS/SK
+                r'\bjadrov\w*\b',
+                # PL
+                r'\bj[aą]drow\w*\b', r'\belektrowni[aąe]\s+j[aą]drow\w*\b',
+            ],
+            'moderate': [
+                r'\bbaseload\b', r'\blow\s+carbon\s+electricity\b',
+                r'\benergy\s+security\b',
+                r'\bmining\b', r'\bbergbau\b', r'\bmineral\b',
+            ],
+        },
+        'hydroelectric': {
+            'strong': [
+                r'\bhydroelectric\b', r'\bhydropower\b', r'\bhydro.?electric\b',
+                r'\bpumped.storage\b', r'\brun.of.river\b',
+                # DE
+                r'\bwasserkraft\b', r'\bpumpspeicher\b',
+                # FR
+                r'\bhydro[eé]lectr\w+\b',
+                # ES/IT
+                r'\bhidroel[eé]ctric\w*\b', r'\bidroelettric\w*\b',
+            ],
+            'moderate': [
+                r'\brenewable\s+energy\b', r'\bclean\s+energy\b',
+            ],
+        },
+        'grid': {
+            'strong': [
+                r'\btransmission\s+grid\b', r'\belectricity\s+grid\b',
+                r'\binterconnect(?:or|ion)\b', r'\bhigh.voltage\b',
+                r'\b(?:TSO|DSO)\b', r'\bsubmarine\s+cable\b', r'\bsubsea\s+cable\b',
+                r'\btransmission\s+system\s+operator\b',
+                r'\bpower\s+line\b', r'\belectricity\s+infrastructure\b',
+                # DE
+                r'\bstromnetz\b', r'\bhochspannung\w*\b',
+                # FR
+                r'\br[eé]seau\s+[eé]lectrique\b',
+                # FI
+                r'\bs[aä]hk[oö]verkko\b',
+                # NL
+                r'\belektriciteitsnet\b',
+            ],
+            'moderate': [
+                r'\benergy\s+infrastructure\b',
+                r'\belectricity\s+market\b', r'\bstrommarkt\b',
+                r'\bpower\s+system\b',
+            ],
+        },
+        'geothermal': {
+            'strong': [
+                r'\bgeothermal\b', r'\bdeep\s+heat\b',
+                # DE
+                r'\bgeothermie\b', r'\berdw[aä]rme\b',
+                # FR
+                r'\bg[eé]otherm\w+\b',
+            ],
+            'moderate': [
+                r'\brenewable\s+heat\b', r'\bclean\s+heat\b',
+            ],
+        },
+        'steel': {
+            'strong': [
+                r'\bgreen\s+steel\b', r'\bhydrogen.based\s+steelmaking\b',
+                r'\bdirect\s+reduc(?:ed|tion)\s+iron\b', r'\bDRI\b',
+                r'\belectric\s+arc\s+furnace\b', r'\bEAF\b',
+                r'\bsteel\s+(?:plant|mill|production|decarboni[sz])\w*\b',
+                r'\biron\s+and\s+steel\b',
+                # DE
+                r'\bstahl\b', r'\beisen\s+und\s+stahl\b', r'\bhochofen\b',
+                r'\blichtbogenofen\b',
+                # FR
+                r'\bacier\b', r'\bsid[eé]rurg\w+\b',
+                # ES
+                r'\bacero\b',
+                # IT
+                r'\bacciaio\b',
+                # PL
+                r'\bstal(?:owni[aąe])?\b',
+                # NACE codes in text
+                r'\bC\.?24\.?[123]\b',
+                r'\bmanufacture\s+of\s+basic\s+iron\b',
+            ],
+            'moderate': [
+                r'\bets\b', r'\bemission\s+trading\b', r'\bcarbon\s+leakage\b',
+                r'\bindirect\s+emission\b',
+                r'\benergy\s+intensive\b', r'\bstrompreiskompensation\b',
+                r'\bmanufacture\s+of\s+basic\s+metals\b', r'\bmetallurg\w+\b',
+                r'\beeg\b', r'\brenewable\s+energy\s+surcharge\b',
+                r'\bstromsteuer\b', r'\belectricity\s+tax\b',
+                r'\benergiesteuer\b', r'\benergy\s+tax\b',
+            ],
+        },
+        'iron': {
+            'strong': [
+                r'\bgreen\s+iron\b', r'\bHBI\b', r'\bhot\s+briquetted\s+iron\b',
+                # DE
+                r'\beisenschwamm\b', r'\bheiss\s*brikettiertes\s+eisen\b',
+            ],
+            'moderate': [
+                r'\biron\s+ore\b', r'\beisenerz\b',
+            ],
+        },
+    }
+
+    def _extract_text_first_n_pages(self, pdf_bytes: bytes, max_pages: int = 8) -> Optional[str]:
+        """Extract text from the first N pages of a PDF.
+
+        Uses pdfplumber (page-by-page) as the primary backend since pymupdf4llm
+        extracts the whole document and is slower for partial reads.
+        """
+        try:
+            import pdfplumber
+            with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
+                parts = []
+                for page in pdf.pages[:max_pages]:
+                    t = page.extract_text()
+                    if t:
+                        parts.append(t)
+            if parts:
+                return '\n'.join(parts)
+        except ImportError:
+            pass
+        except Exception as exc:
+            log.debug(f"    pdfplumber (N-page) failed: {exc}")
+
+        # fallback to full extraction
+        return self._extract_text(pdf_bytes) or self._extract_markdown(pdf_bytes)
+
+    def detect_tech_keywords(self, text: str) -> dict:
+        """Scan text for technology keywords and return per-sector matches.
+
+        Strong keyword hits are weighted 3x relative to moderate hits when
+        determining the primary sector. A sector needs at least one strong
+        hit to be counted as 'found'; moderate-only matches are flagged but
+        not included in techs_found.
+
+        Returns
+        -------
+        dict with keys:
+            techs_found       : list[str]  — sectors with strong hits
+            techs_moderate    : list[str]  — sectors with only moderate hits
+            tech_evidence     : dict       — {sector: [snippet, ...]}
+            primary_tech      : str        — sector with highest weighted score
+            weighted_scores   : dict       — {sector: float} for all matched sectors
+            has_strong_hit    : dict       — {sector: bool}
+        """
+        STRONG_WEIGHT = 3.0
+        MODERATE_WEIGHT = 1.0
+
+        hits: dict[str, list[str]] = {}
+        weighted: dict[str, float] = {}
+        has_strong: dict[str, bool] = {}
+
+        for sector, tier_dict in self.TECH_KEYWORD_PATTERNS.items():
+            sector_hits = []
+            sector_score = 0.0
+            sector_has_strong = False
+
+            for tier, patterns in tier_dict.items():
+                weight = STRONG_WEIGHT if tier == 'strong' else MODERATE_WEIGHT
+                for pat in patterns:
+                    for m in re.finditer(pat, text, re.IGNORECASE):
+                        start = max(0, m.start() - 60)
+                        end = min(len(text), m.end() + 60)
+                        snippet = text[start:end].replace('\n', ' ').strip()
+                        sector_hits.append(snippet)
+                        sector_score += weight
+                        if tier == 'strong':
+                            sector_has_strong = True
+
+            if sector_hits:
+                hits[sector] = sector_hits[:3]
+                weighted[sector] = sector_score
+                has_strong[sector] = sector_has_strong
+
+        # Sectors with at least one strong hit
+        strong_sectors = sorted(s for s, v in has_strong.items() if v)
+        # Sectors with only moderate hits
+        moderate_only = sorted(s for s in hits if s not in strong_sectors)
+
+        primary = max(weighted, key=weighted.get) if weighted else ''
+
+        return {
+            'techs_found': strong_sectors,
+            'techs_moderate': moderate_only,
+            'tech_evidence': hits,
+            'primary_tech': primary,
+            'weighted_scores': weighted,
+            'has_strong_hit': has_strong,
+        }
+
+    def parse_sa_code_tech(self, sa_code: str, pdf_links: list[dict],
+                           max_pages: int = 20) -> dict:
+        """Download PDFs for an SA code and extract technology keywords.
+
+        Scans ALL available language versions (not just the first success)
+        and merges hits across them. This catches keywords in the original-
+        language decision that the English summary may omit. Increased
+        default max_pages from 8→20 to cover substantive sections of long
+        IPCEI decisions.
+
+        Returns
+        -------
+        dict with keys:
+            sa_code, pdf_status, pdf_url, pdf_lang, extraction_backend,
+            techs_found, techs_moderate, tech_evidence, primary_tech,
+            weighted_scores, has_strong_hit, langs_scanned, full_text
+        """
+        result = {
+            'sa_code': sa_code,
+            'pdf_status': 'no_pdf',
+            'pdf_url': '',
+            'pdf_lang': '',
+            'extraction_backend': '',
+            'techs_found': [],
+            'techs_moderate': [],
+            'tech_evidence': {},
+            'primary_tech': '',
+            'weighted_scores': {},
+            'has_strong_hit': {},
+            'langs_scanned': [],
+            'full_text': '',  # merged text from all PDFs (for beneficiary name check)
+        }
+
+        if not pdf_links:
+            return result
+
+        # Prefer English first, then WLAL (full decision), then other langs
+        ordered = sorted(pdf_links, key=lambda x: (
+            0 if x['lang'] in ('en', 'EN') else 1,
+            0 if x.get('name') == 'WLAL' else 1,
+        ))
+
+        # Accumulate results across all language versions
+        merged_weighted: dict[str, float] = {}
+        merged_evidence: dict[str, list[str]] = {}
+        merged_has_strong: dict[str, bool] = {}
+        merged_text_parts: list[str] = []
+        any_parsed = False
+
+        for link_info in ordered:
+            url = link_info['url']
+            lang = link_info.get('lang', '')
+
+            pdf_bytes = self._load_cached(sa_code, url)
+            if pdf_bytes is None:
+                pdf_bytes = self._download(url)
+                if pdf_bytes is None:
+                    continue
+                self._save_cache(sa_code, url, pdf_bytes)
+
+            text = self._extract_text_first_n_pages(pdf_bytes, max_pages=max_pages)
+            if text is None:
+                continue
+
+            any_parsed = True
+            result['langs_scanned'].append(lang)
+            merged_text_parts.append(text)
+
+            # Record first successful URL/lang for backward compatibility
+            if not result['pdf_url']:
+                result['pdf_url'] = url
+                result['pdf_lang'] = lang
+
+            tech_result = self.detect_tech_keywords(text)
+
+            # Merge: accumulate weighted scores and evidence across languages
+            for sector, score in tech_result.get('weighted_scores', {}).items():
+                merged_weighted[sector] = merged_weighted.get(sector, 0) + score
+                if sector not in merged_evidence:
+                    merged_evidence[sector] = []
+                merged_evidence[sector].extend(tech_result['tech_evidence'].get(sector, []))
+                # Keep max 3 snippets per sector
+                merged_evidence[sector] = merged_evidence[sector][:3]
+                if tech_result['has_strong_hit'].get(sector, False):
+                    merged_has_strong[sector] = True
+
+        if any_parsed:
+            result['extraction_backend'] = 'pdfplumber'
+            result['pdf_status'] = 'parsed'
+
+            strong_sectors = sorted(s for s, v in merged_has_strong.items() if v)
+            moderate_only = sorted(s for s in merged_weighted if s not in strong_sectors)
+            primary = max(merged_weighted, key=merged_weighted.get) if merged_weighted else ''
+
+            result['techs_found'] = strong_sectors
+            result['techs_moderate'] = moderate_only
+            result['tech_evidence'] = merged_evidence
+            result['primary_tech'] = primary
+            result['weighted_scores'] = merged_weighted
+            result['has_strong_hit'] = merged_has_strong
+            result['full_text'] = '\n\n'.join(merged_text_parts)
+        else:
+            result['pdf_status'] = 'download_failed'
+
+        return result
+
+
 # ---------------------------------------------------------------------------
 # Convenience function for use in consolidation.py
 # ---------------------------------------------------------------------------

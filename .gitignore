@@ -1,67 +1,10 @@
-# Python
-__pycache__/
-*.py[cod]
-*.egg-info/
-dist/
-build/
-.eggs/
-*.egg
-
-# Virtual environments
-.venv/
-venv/
-env/
-
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
-
-# OS
-.DS_Store
-Thumbs.db
-
-# Data files (too large for git -- see README for download instructions)
-data/raw/*.dsv
-data/raw/*.xlsx
-data/raw/*.zip
-data/raw/*.csv
-data/processed/*.csv
-data/processed/*.json
-data/processed/*.parquet
-data/processed/match_output/
-data/processed/enrichment_output/
-
-# Reference data IS tracked (IPCEI CSVs, CORDIS participants, EUTL ZIP)
-!data/reference/
-
-# Keep directory structure
-!data/raw/.gitkeep
-!data/processed/.gitkeep
-
-# User input files — keep locally, don't commit
-companies_*.csv
-companies_*.xlsx
-*.xlsx
-!my_companies.csv
-!examples/**/*.xlsx
-
-# Environment
-.env
-.env.*
-
-# Logs
-*.log
-logs/
-
-# Cache
-cache/
-
-# EC DG Competition state aid case registry (~638 MB) — auto-downloaded on first run
-# with --pdf-enrichment (default). Source: GitHub Releases v1.0.
+# downloaded on first run
+data/processed/
 case-data-SA.json
 
-# Ad-hoc analysis scripts — keep locally, don't commit
-audit_double_counting.py
-data/processed/audit/
+# local working files
+data/raw/
+data/cache/
+_attic_*/
+__pycache__/
+*.pyc

@@ -36,7 +36,7 @@ import time
 import logging
 from pathlib import Path
 
-from src.paths import PROCESSED_DIR, ENRICHMENT_DIR, MATCH_OUTPUT_DIR, REPO_ROOT, read_master
+from src.paths import PROCESSED_DIR, ENRICHMENT_DIR, MATCH_OUTPUT_DIR, REPO_ROOT, read_master, read_master_chunked
 
 sys.stdout.reconfigure(encoding='utf-8')
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
@@ -279,52 +279,14 @@ def run_fts_cordis_bridge(
     else:
         log.info("  No sector keywords supplied — topic signal disabled")
 
-    # Load FTS data from master dataset.
-    #
-    # MEMORY FIX (2026-04-14, v2): the historical behaviour was
-    # ``master = read_master()`` — which loads all 36 columns ×
-    # 27.7M rows (~15 GB RAM) then filters to FTS. A concurrent
-    # pipeline run on a 32 GB machine OOM-killed during this step.
-    #
-    # Root cause: two heavy string-blob columns (``original_columns``
-    # carrying per-source raw-JSON audit data and ``extra_fields_json``
-    # carrying the schema-v3 enrichment blob) together account for
-    # ~75% of the master's in-memory footprint despite only being
-    # used for forensic audit. Neither is read by the matcher, the
-    # dedup layer, the GGE computation, or the FTS-CORDIS bridge.
-    #
-    # The v2 fix drops exactly those two columns from the scan and
-    # keeps all other 34 COMMON_COLUMNS fields — so
-    # ``entity_name_clean``, ``entity_id``, ``flow_stage``,
-    # ``nace_2digit``, ``is_primary_record``, etc. are still
-    # available to downstream dedup + summary tables. Measured peak
-    # RAM drops from ~15 GB to ~3.4 GB (77% reduction) with zero
-    # semantic loss for any non-audit downstream consumer.
-    #
-    # (An earlier v1 fix used an 11-column whitelist that dropped
-    # entity resolution fields too. That was over-aggressive — it
-    # saved another 1 GB of RAM but broke the FTS_CORDIS-derived
-    # rows' participation in Phase 2b dedup joins that read
-    # ``entity_name_clean``. v2 is the correct balance.)
-    log.info("Loading FTS rows from master dataset (chunked, heavy-blob-filtered)...")
-    from src.harmonization.utils import COMMON_COLUMNS
-    _HEAVY_DROPS = {'original_columns', 'extra_fields_json'}
-    _fts_cols = [c for c in COMMON_COLUMNS if c not in _HEAVY_DROPS]
-    from src.paths import read_master_chunked
-    fts_chunks: list[pd.DataFrame] = []
-    total_scanned = 0
-    for chunk in read_master_chunked(columns=_fts_cols, chunksize=500_000):
-        total_scanned += len(chunk)
-        sub = chunk[chunk['source'] == 'FTS']
-        if len(sub):
-            fts_chunks.append(sub.copy())
-    fts = pd.concat(fts_chunks, ignore_index=True) if fts_chunks else pd.DataFrame(columns=_fts_cols)
-    del fts_chunks
-    log.info(
-        f"  Scanned {total_scanned:,} master rows; kept {len(fts):,} FTS rows "
-        f"({len(_fts_cols)} columns, dropped {sorted(_HEAVY_DROPS)}); "
-        f"EUR {float(fts['amount_eur'].fillna(0).sum()):,.0f}"
-    )
+    # Load FTS data from master dataset — STREAMED to keep only FTS rows.
+    # Loading the full ~27M-row master here used to blow up RAM; instead we
+    # stream row-group batches and keep just source=='FTS' (~1.4M rows).
+    log.info("Loading FTS rows from master dataset (streamed)...")
+    fts_parts = [c[c['source'] == 'FTS'] for c in read_master_chunked(chunksize=250_000)]
+    fts = pd.concat(fts_parts, ignore_index=True) if fts_parts else pd.DataFrame()
+    del fts_parts
+    log.info(f"  Total FTS rows: {len(fts):,}, EUR {fts['amount_eur'].sum():,.0f}")
 
     # Extract grant IDs
     log.info("Extracting grant IDs from descriptions...")

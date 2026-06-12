@@ -107,6 +107,22 @@ class MatchConfig:
     short_name_max_len: int = 5
     chunk_size: int = 250_000
 
+    # Layer B contextual regex: minimum reference-name length to be searchable as
+    # a whole word in descriptions/titles. Lower it (e.g. 4) to let short brand
+    # names (catl, ford, varta) be found in grant text.
+    context_min_len: int = 6
+    # Allow a single-token short reference (e.g. "ford", "catl") to match a master
+    # name when that token appears as a whole token in it. 0 = disabled (default).
+    # When > 0, such matches are forced to fuzzy_medium so the country veto must
+    # corroborate them. Set to the minimum token length to consider (e.g. 3).
+    single_token_match_min_len: int = 0
+    # Scan the beneficiary/entity NAME (not just descriptions) for any reference
+    # company name as a whole word. Catches foreign firms registered under long
+    # local legal names (e.g. "Contemporary Amperex Technology Hungary Kft" -> the
+    # reference "contemporary amperex technology") that Layer A's length-ratio and
+    # token-overlap guards reject. Off by default to keep other runs unchanged.
+    context_scan_entity_name: bool = False
+
     # Names that should only match via exact lookup (too short/ambiguous for fuzzy).
     # Empty by default — the short_name_max_len guard already handles short names.
     # Sector-specific examples (e.g. automotive acronyms) should be passed via config.
@@ -118,30 +134,8 @@ class MatchConfig:
         'grand total', 'all others', 'rest',
     }))
 
-    # Names blocked from Layer B contextual matching (common words).
-    # The default ships with a sector-agnostic list of names that are
-    # consistently over-matched in free-text description fields across
-    # any real company list: legal forms, short auto/energy/bank tickers,
-    # and common words used as brand names. Sector-specific configs can
-    # extend this via the config override. Plan audit finding L4.
-    contextual_blocklist: frozenset[str] = field(default_factory=lambda: frozenset({
-        # Common 2-5 char brand/ticker names that wreck contextual precision.
-        'ford', 'apple', 'shell', 'bp', 'edf', 'bosch', 'abb', 'dow',
-        'bmw', 'vw', 'ge', 'ir', 'jj', 'ing', 'ubs', 'total',
-        # Generic words that appear as brand names in real ref lists.
-        'group', 'other', 'others', 'global', 'international',
-        'holdings', 'holding', 'systems', 'solutions', 'services',
-        'technologies', 'industries', 'partners', 'ventures',
-        # Generic EU-funding words that also appear as brand names.
-        'horizon', 'life', 'green', 'blue', 'smart', 'digital',
-        'energy', 'power', 'mobility', 'future', 'vision',
-    }))
-
-    # Layer B+ (IFI project-title extraction) excludes titles whose
-    # cleaned reference is dominated by generic IFI/EU-programme filler
-    # words. This is enforced in consolidation.assess_match_quality via
-    # ``suspect_eib_title`` (M5 in the audit). The blocklist above is
-    # the first line of defence; the M5 check is the second.
+    # Names blocked from Layer B contextual matching (common words)
+    contextual_blocklist: frozenset[str] = field(default_factory=lambda: frozenset())
 
     # Known false positive pairs: frozenset of (ref_clean, entity_clean) tuples
     false_positive_pairs: frozenset[tuple[str, str]] = field(default_factory=lambda: frozenset())
@@ -177,7 +171,7 @@ class MatchConfig:
 # ---------------------------------------------------------------------------
 LOAD_COLS = [
     'source', 'source_record_id', 'beneficiary_name', 'country',
-    'amount_eur', 'year', 'description', 'original_columns',
+    'amount_eur', 'amount_gge_eur', 'year', 'description', 'original_columns',
     'financial_instrument_class', 'flow_stage_group', 'flow_stage',
     'fiscal_source_type',
     'is_primary_record', 'entity_name_raw', 'entity_name_clean',
@@ -284,114 +278,14 @@ _LEGAL_SUFFIX_RE = re.compile(
 )
 
 
-import unicodedata as _unicodedata
-
-# Cyrillic → Latin transliteration table (GOST-style, lowercase only;
-# ``clean_name`` already lowercases before calling ``_romanise``).
-# Multi-character values are handled correctly by ``str.translate``
-# when the source table is built via ``str.maketrans``.
-_CYR_TABLE = str.maketrans({
-    'а':'a','б':'b','в':'v','г':'g','д':'d','е':'e','ё':'yo',
-    'ж':'zh','з':'z','и':'i','й':'y','к':'k','л':'l','м':'m',
-    'н':'n','о':'o','п':'p','р':'r','с':'s','т':'t','у':'u',
-    'ф':'f','х':'kh','ц':'ts','ч':'ch','ш':'sh','щ':'shch',
-    'ъ':'','ы':'y','ь':'','э':'e','ю':'yu','я':'ya',
-    'ў':'u',  # Bulgarian
-    'є':'ye','і':'i','ї':'yi','ґ':'g',  # Ukrainian
-})
-
-# Greek → Latin transliteration table (ELOT 743 / BGN-PCGN approximation).
-_GREEK_TABLE = str.maketrans({
-    'α':'a','β':'v','γ':'g','δ':'d','ε':'e','ζ':'z','η':'i',
-    'θ':'th','ι':'i','κ':'k','λ':'l','μ':'m','ν':'n','ξ':'x',
-    'ο':'o','π':'p','ρ':'r','σ':'s','ς':'s','τ':'t','υ':'y',
-    'φ':'f','χ':'ch','ψ':'ps','ω':'o',
-    # Accented vowels (monotonic + polytonic)
-    'ά':'a','έ':'e','ή':'i','ί':'i','ό':'o','ύ':'y','ώ':'o',
-    'ϊ':'i','ϋ':'y','ΐ':'i','ΰ':'y',
-})
-
-# Codepoint ranges that signal a non-Latin script needing the slow path.
-# Using these as a fast pre-check lets us skip the dict lookups and
-# NFKD decomposition for the overwhelming majority of names (which are
-# plain ASCII or Latin-with-accents).
-_CYR_LO, _CYR_HI = 0x0400, 0x052F      # Cyrillic + supplement
-_GRK_LO, _GRK_HI = 0x0370, 0x03FF      # Greek and Coptic
-
-
-def _romanise(s: str) -> str:
-    """Transliterate non-Latin scripts to ASCII letters.
-
-    **Performance-tuned** (2026-04-14). Profiling the earlier version
-    showed a chunk-4 slowdown from ~17s (baseline) to 5:39s (improved)
-    when applied to 250k description strings per Layer B chunk.
-    Three fixes, each measured:
-
-    1. ``str.isascii()`` replaces the ``.encode('ascii')`` try/except
-       early-return — no exception allocation, ~50x faster for the
-       (overwhelmingly common) ASCII case.
-    2. ``_CYR_TABLE`` / ``_GREEK_TABLE`` are module-scope ``str.maketrans``
-       tables instead of function-local dicts — no per-call allocation,
-       and ``str.translate`` is a C-level builtin ~50x faster than
-       a Python char loop.
-    3. A codepoint pre-check (``min/max ord``) skips NFKD entirely for
-       pure-Latin-with-diacritics strings, which only need the
-       decomposition pass, not the script translation.
-
-    Handles:
-
-    * **Latin with diacritics** — ``"Škoda"`` → ``"skoda"``,
-      ``"São Paulo"`` → ``"sao paulo"``, ``"Müller"`` → ``"muller"``.
-    * **Cyrillic** — ``"Газпром"`` → ``"gazprom"``,
-      ``"Лукойл"`` → ``"lukoyl"``.
-    * **Greek** — ``"Αλφα"`` → ``"alfa"``, ``"Μυτιληναίος"`` →
-      ``"mytiliaios"`` (approximate).
-
-    CJK scripts pass through unchanged; the downstream
-    ``[^a-z0-9\\s]`` strip in ``clean_name`` drops them to
-    whitespace.
-    """
-    if not s:
-        return s
-    # Hot path: pure ASCII (no accents, no non-Latin scripts).
-    # ``str.isascii`` is a C-level builtin — constant time, no exceptions.
-    if s.isascii():
-        return s
-    # Quick scan for Cyrillic or Greek codepoints. If none, we only
-    # need the NFKD pass (Latin diacritics).
-    has_non_latin = False
-    for ch in s:
-        cp = ord(ch)
-        if _CYR_LO <= cp <= _CYR_HI or _GRK_LO <= cp <= _GRK_HI:
-            has_non_latin = True
-            break
-    if has_non_latin:
-        s = s.translate(_CYR_TABLE).translate(_GREEK_TABLE)
-    # NFKD-decompose and drop combining marks. Only runs for strings
-    # that actually had non-ASCII characters, so this is guaranteed
-    # to do work (no wasted pass).
-    s = _unicodedata.normalize('NFKD', s)
-    return ''.join(c for c in s if not _unicodedata.combining(c))
-
-
 def clean_name(name) -> str:
-    """Clean entity name: lowercase, NFKD + romanise, strip legal suffixes, normalize whitespace.
-
-    Pipeline:
-        1. lowercase
-        2. drop parenthesised content ``"Foo (Germany) GmbH"`` → ``"foo  gmbh"``
-        3. romanise: Cyrillic / Greek → Latin, NFKD drop combining marks
-        4. strip legal suffixes (GmbH, SpA, ...)
-        5. replace non-alphanumeric with space
-        6. collapse runs of whitespace
-    """
+    """Clean entity name: lowercase, strip legal suffixes, normalize whitespace."""
     if pd.isna(name):
         return ''
     s = str(name).strip().lower()
     if not s:
         return ''
     s = re.sub(r'\([^)]*\)', ' ', s)
-    s = _romanise(s)
     s = _LEGAL_SUFFIX_RE.sub(' ', s)
     s = re.sub(r'[^a-z0-9\s]', ' ', s)
     s = re.sub(r'\s+', ' ', s).strip()
@@ -591,12 +485,25 @@ def match_unique_names(
         # Validate: token overlap
         ref_tokens = significant_tokens(matched_ref)
         overlap = name_tokens & ref_tokens
-        if len(overlap) < config.token_overlap_min:
+
+        # Single-token short reference (e.g. "ford", "catl", "varta"): one
+        # significant token that appears as a whole token in the master name.
+        # These never reach token_overlap_min=2 and are normally dropped. When
+        # enabled, accept them but force fuzzy_medium so the downstream country
+        # veto must corroborate (short brand names are ambiguous on their own).
+        single_token_ok = (
+            config.single_token_match_min_len > 0
+            and len(ref_tokens) == 1
+            and len(matched_ref) >= config.single_token_match_min_len
+            and ref_tokens.issubset(name_tokens)
+        )
+
+        if len(overlap) < config.token_overlap_min and not single_token_ok:
             continue
 
-        # Validate: length ratio
+        # Validate: length ratio (skipped for single-token whole-word matches)
         ratio = max(len(name), len(matched_ref)) / max(min(len(name), len(matched_ref)), 1)
-        if ratio > config.length_ratio_max:
+        if ratio > config.length_ratio_max and not single_token_ok:
             continue
 
         # Validate: not a known false positive
@@ -608,8 +515,12 @@ def match_unique_names(
         if is_fp:
             continue
 
-        match_type = 'fuzzy_high' if score >= config.fuzzy_high_threshold else 'fuzzy_medium'
-        results[name] = (matched_ref, score, match_type, '')
+        if single_token_ok:
+            match_type, notes = 'fuzzy_medium', 'single_token'
+        else:
+            match_type = 'fuzzy_high' if score >= config.fuzzy_high_threshold else 'fuzzy_medium'
+            notes = ''
+        results[name] = (matched_ref, score, match_type, notes)
         n_fuzzy += 1
 
     log.info(f"  Unique name matching: {n_exact:,} exact, {n_fuzzy:,} fuzzy, "
@@ -625,8 +536,9 @@ def build_context_regex(
     aliases: dict,
     config: MatchConfig,
 ) -> tuple[re.Pattern, dict]:
-    """Build a single compiled regex matching any reference name (>= 6 chars) as whole-word."""
-    MIN_CTX_LEN = 6
+    """Build a single compiled regex matching any reference name as a whole word
+    (>= config.context_min_len chars)."""
+    MIN_CTX_LEN = config.context_min_len
 
     terms = {}
     for ref in ref_clean_list:
@@ -716,7 +628,15 @@ def run_matching(
     ref_clean_list = sorted(ref_clean_set)
     exact_lookup = build_exact_lookup(ref_df, aliases)
     ref_clean_to_raw = dict(zip(ref_df['ref_name_clean'], ref_df['ref_name_raw']))
-    ref_clean_to_country = dict(zip(ref_df['ref_name_clean'], ref_df['ref_country'].fillna('').str.upper()))
+    # A reference name can appear once per facility country (e.g. CATL in DE and
+    # HU). Keep the FULL set of countries so the fuzzy_medium country veto only
+    # fires when the subsidy country is in none of them.
+    ref_clean_to_countries = (
+        ref_df.assign(_c=ref_df['ref_country'].fillna('').str.upper().str.strip())
+        .groupby('ref_name_clean')['_c']
+        .apply(lambda s: frozenset(c for c in s if c))
+        .to_dict()
+    )
 
     log.info(f"Reference: {len(ref_clean_set)} unique cleaned names, "
              f"{len(exact_lookup)} exact lookup entries (incl. aliases)")
@@ -731,13 +651,7 @@ def run_matching(
         log.error(f"Master dataset not found: {master_path}")
         return pd.DataFrame(), pd.DataFrame()
 
-    # L4: collect both the unique-name set AND the master-row count per
-    # cleaned name. The count is joined back onto every matched row as
-    # `entity_name_clean_dedup_count` so downstream audits can see how many
-    # master rows contributed to each reference-name match without having
-    # to re-scan the master parquet.
-    from collections import Counter
-    name_counter: Counter = Counter()
+    unique_names = set()
     chunk_count = 0
     total_rows = 0
     total_primary = 0
@@ -751,10 +665,9 @@ def run_matching(
         total_rows += len(chunk)
         mask = chunk['is_primary_record'].astype(str).str.lower() == 'true'
         total_primary += mask.sum()
-        names = chunk.loc[mask, 'entity_name_clean'].dropna()
-        name_counter.update(names)
+        names = chunk.loc[mask, 'entity_name_clean'].dropna().unique()
+        unique_names.update(names)
 
-    unique_names = set(name_counter.keys())
     log.info(f"  Total rows: {total_rows:,}, primary: {total_primary:,}")
     log.info(f"  Unique entity names to match: {len(unique_names):,}")
 
@@ -777,21 +690,17 @@ def run_matching(
     col_matched_on = f'{prefix}_matched_on'
     col_ref_name = f'{prefix}_reference_name'
     col_notes = f'{prefix}_notes'
-    # L4: traceability column — how many master rows share this
-    # entity_name_clean value. Applied only to Layer A matches (Layer B
-    # contextual matches hit rows individually, so the dedup optimization
-    # does not apply to them).
-    col_dedup_count = 'entity_name_clean_dedup_count'
 
     # Pre-build Layer A lookup as a DataFrame for vectorised merge
     if name_results:
         la_df = pd.DataFrame([
             {'_ec': k, '_ref_clean': v[0], '_score': v[1], '_mtype': v[2], '_notes': v[3],
-             '_ref_country': ref_clean_to_country.get(v[0], '')}
+             '_ref_countries': ref_clean_to_countries.get(v[0], frozenset())}
             for k, v in name_results.items()
         ])
     else:
-        la_df = pd.DataFrame(columns=['_ec', '_ref_clean', '_score', '_mtype', '_notes'])
+        la_df = pd.DataFrame(columns=['_ec', '_ref_clean', '_score', '_mtype', '_notes',
+                                      '_ref_countries'])
 
     for chunk in _read_chunks(
         master_path,
@@ -811,7 +720,6 @@ def run_matching(
         chunk[col_matched_on] = ''
         chunk[col_ref_name] = ''
         chunk[col_notes] = ''
-        chunk[col_dedup_count] = 0
 
         # --- Apply Layer A results (vectorised via merge) ---
         ec_series = chunk['entity_name_clean'].fillna('')
@@ -830,10 +738,6 @@ def run_matching(
             ).values
             chunk.loc[la_idx, col_ref_name] = ref_raws
             chunk.loc[la_idx, col_notes] = merged.loc[layer_a_mask.values, '_notes'].values
-            # L4: carry the master-wide dedup count on each matched row.
-            chunk.loc[la_idx, col_dedup_count] = chunk.loc[la_idx, 'entity_name_clean'].map(
-                lambda n: name_counter.get(n, 0)
-            ).astype(int)
 
         # --- Country consistency veto (fuzzy_medium only) ---
         # If the reference company has a country and the master row has a country
@@ -841,13 +745,13 @@ def run_matching(
         # matches are confident enough to be kept regardless. This is a holistic
         # structural filter — it applies automatically to any company list that
         # includes a 'country' column; no per-entity config is needed.
-        if len(la_idx) > 0 and '_ref_country' in merged.columns:
-            ref_ctries = merged.loc[layer_a_mask.values, '_ref_country'].fillna('').str.upper().values
+        if len(la_idx) > 0 and '_ref_countries' in merged.columns:
+            ref_ctrysets = merged.loc[layer_a_mask.values, '_ref_countries'].values
             row_ctries = chunk.loc[la_idx, 'country'].fillna('').str.strip().str.upper().values
             mtypes_arr = merged.loc[layer_a_mask.values, '_mtype'].values
             country_veto = np.array([
-                mt == 'fuzzy_medium' and bool(rc) and bool(rc2) and rc != rc2
-                for mt, rc, rc2 in zip(mtypes_arr, ref_ctries, row_ctries)
+                mt == 'fuzzy_medium' and bool(rc2) and bool(rcs) and rc2 not in rcs
+                for mt, rcs, rc2 in zip(mtypes_arr, ref_ctrysets, row_ctries)
             ])
             if country_veto.any():
                 veto_idx = la_idx[country_veto]
@@ -978,6 +882,36 @@ def run_matching(
                         break
             ctx_count += oc_count
 
+        # --- Layer B+: scan the beneficiary/entity NAME for any reference company
+        # name as a whole word (system-wide; all sources). Catches firms registered
+        # under long local legal names that Layer A's length-ratio / token-overlap
+        # guards reject — e.g. "Samsung SDI Magyarorszag ... Reszvenytarsasag",
+        # "SK On Hungary ... Tarsasag", or (via alias) "Contemporary Amperex
+        # Technology Hungary Kft" -> CATL. Whole-word + context_min_len keep it
+        # precise (\\becopro\\b matches "ECOPRO BM" but not "ecoprogetto").
+        if config.context_scan_entity_name:
+            en_un = chunk.loc[~chunk[col_flag]]
+            if len(en_un) > 0:
+                namecol = ('entity_name_raw' if 'entity_name_raw' in en_un.columns
+                           else 'entity_name_clean')
+                en_clean = en_un[namecol].fillna('').apply(clean_name)
+                en_matches = en_clean.str.extract(ctx_pattern, expand=False)
+                en_hit = en_matches.notna()
+                en_idx = en_un.index[en_hit.values]
+                if len(en_idx) > 0:
+                    eterms = en_matches[en_hit].values
+                    eref_cleans = [ctx_term_map[t] for t in eterms]
+                    eref_raws = [ref_clean_to_raw.get(rc, rc) for rc in eref_cleans]
+                    eia = [t != rc for t, rc in zip(eterms, eref_cleans)]
+                    chunk.loc[en_idx, col_flag] = True
+                    chunk.loc[en_idx, col_score] = [90.0 if a else 93.0 for a in eia]
+                    chunk.loc[en_idx, col_type] = 'contextual_entity_name'
+                    chunk.loc[en_idx, col_matched_on] = namecol
+                    chunk.loc[en_idx, col_ref_name] = eref_raws
+                    chunk.loc[en_idx, col_notes] = [
+                        f'{"alias_" if a else ""}match_in_entity_name' for a in eia]
+                    ctx_count += len(en_idx)
+
         matched = chunk[col_flag].sum()
         total_matched += matched
         layer_a_count = matched - ctx_count
@@ -993,7 +927,6 @@ def run_matching(
                 'fiscal_source_type',
                 'entity_name_raw', 'entity_name_clean',
                 col_ref_name, col_score, col_type, col_matched_on, col_notes,
-                col_dedup_count,
             ]
             all_match_records.append(matched_rows[log_cols])
             all_enriched_chunks.append(matched_rows)

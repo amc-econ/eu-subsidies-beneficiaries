@@ -1,32 +1,48 @@
 company,ipcei,country,role,amount_eur_est,amount_confidence
-BMW,Batteries 1,DE,OEM,60000000,estimated
-BASF,Batteries 1,DE,Materials,175000000,estimated
-Umicore,Batteries 1,BE,Materials/Recycling,80000000,estimated
+BMW,Batteries 1,DE,OEM,97500000.0,decision_range
+BASF,Batteries 1,DE,Materials,295000000.0,decision_range
+Umicore,Batteries 1,BE,Materials/Recycling,55000000.0,decision_range
 Solvay,Batteries 1,BE,Materials,,unknown
-VARTA,Batteries 1,DE,Battery cells,300000000,estimated
-ACC,Batteries 1,FR,Battery cells,500000000,estimated
-SEEL (Verkor),Batteries 1,FR,Battery cells,,unknown
-ACC,Batteries 2 (EuBatIn),FR,Battery cells,437000000,confirmed
-Northvolt,Batteries 2 (EuBatIn),SE,Battery cells,155000000,estimated
-BMW,Batteries 2 (EuBatIn),DE,OEM,50000000,estimated
-BASF,Batteries 2 (EuBatIn),DE,Materials,175000000,estimated
+VARTA,Batteries 1,DE,Battery cells,400500000.0,decision_range
+ACC,Batteries 1,FR,Battery cells,750000000.0,decision_range
+SEEL (identity uncertain; likely Northvolt-related),Batteries 1,SE,Battery cells,53700000.0,decision_range_sek
+ACC,Batteries 2 (EuBatIn),FR,Battery cells,437000000.0,confirmed
+Northvolt,Batteries 2 (EuBatIn),SE,Battery cells,155000000.0,estimated
+BMW,Batteries 2 (EuBatIn),DE,OEM,50000000.0,estimated
+BASF,Batteries 2 (EuBatIn),DE,Materials,175000000.0,estimated
 Umicore,Batteries 2 (EuBatIn),DE,Materials/Recycling,,unknown
-VARTA,Batteries 2 (EuBatIn),DE,Battery cells,200000000,estimated
+VARTA,Batteries 2 (EuBatIn),DE,Battery cells,200000000.0,estimated
 ElringKlinger,Batteries 2 (EuBatIn),DE,Auto supplier,,unknown
 FPT Industrial (CNH/Iveco),Batteries 2 (EuBatIn),IT,OEM/powertrain,,unknown
 InoBat Energy,Batteries 2 (EuBatIn),SK,Battery cells,,unknown
 Skeleton Technologies,Batteries 2 (EuBatIn),DE,Energy storage,,unknown
 PowerCo SE (VW),Batteries 2 (EuBatIn),DE,Battery cells (associated),,unknown
-STMicroelectronics,Microelectronics 2 (ME-CT),FR,Semiconductors,2900000000,estimated
-Infineon,Microelectronics 2 (ME-CT),DE,Semiconductors,1000000000,estimated
+STMicroelectronics,Microelectronics 2 (ME-CT),FR,Semiconductors,2900000000.0,estimated
+Infineon,Microelectronics 2 (ME-CT),DE,Semiconductors,1000000000.0,estimated
 NXP,Microelectronics 2 (ME-CT),NL,Semiconductors,,unknown
 Bosch,Microelectronics 2 (ME-CT),DE,Semiconductors,,unknown
 Renault,Microelectronics 2 (ME-CT),FR,OEM,,unknown
 Daimler Truck,Hy2Tech,DE,OEM (trucks),,unknown
 Bosch,Hy2Tech,DE,Fuel cell components,,unknown
-Symbio (Faurecia/Michelin),Hy2Tech,FR,Fuel cells,670000000,confirmed
+Symbio (Faurecia/Michelin),Hy2Tech,FR,Fuel cells,670000000.0,confirmed
 OPmobility (Plastic Omnium),Hy2Tech,FR,H2 storage tanks,,unknown
 Iveco/Fincantieri,Hy2Tech,IT,OEM (trucks),,unknown
 BMW,Hy2Move,DE,OEM,,unknown
 Michelin,Hy2Move,FR,Tires/fuel cells,,unknown
 Skeleton Technologies,Hy2Move,EE,Energy storage,,unknown
+FAAM,Batteries 1,IT,Battery cells,525000000.0,decision_range
+Solvay,Batteries 1,FR,Materials,150000000.0,decision_range
+Solvay,Batteries 1,IT,Materials,42500000.0,decision_range
+ACC,Batteries 1,DE,Battery cells,430000000.0,decision_range
+Umicore,Batteries 1,DE,Materials/Recycling,8500000.0,decision_range
+Keliber,Batteries 1,FI,Battery mining,5500000.0,decision_range
+BASF,Batteries 1,FI,Materials,15000000.0,decision_range
+Nanocyl,Batteries 1,BE,Materials,5000000.0,decision_range
+Endurance,Batteries 1,IT,Auto supplier,12500000.0,decision_range
+Enel X,Batteries 1,IT,Charging/EV,3500000.0,decision_range
+Kaitek,Batteries 1,IT,Battery cells,6500000.0,decision_range
+Fortum,Batteries 1,FI,Battery recycling,5500000.0,decision_range
+Terrafame,Batteries 1,FI,Battery mining,10000000.0,decision_range
+Elemental,Batteries 1,PL,Battery recycling,75000000.0,decision_range
+Eneris,Batteries 1,PL,Battery recycling,150000000.0,decision_range
+Umicore,Batteries 1,PL,Materials/Recycling,5000000.0,decision_range

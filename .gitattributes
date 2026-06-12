@@ -1,2 +1,0 @@
-# master_dataset.parquet is distributed via GitHub Releases, not git-lfs.
-# See run_pipeline.py _ensure_master_dataset() for auto-download logic.

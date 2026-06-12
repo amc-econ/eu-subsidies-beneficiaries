@@ -246,6 +246,83 @@ class SACaseLookup:
         results.sort(key=lambda x: (0 if x['lang'] in ('en', 'EN') else 1, x['lang']))
         return results
 
+    def get_case_metadata(self, sa_code: str) -> dict:
+        """Return parsed metadata for a case: title, objectives, NACE sectors, member state.
+
+        Returns dict with keys:
+          title           : str   — English or first available case title
+          original_title  : str   — original-language title
+          objectives      : list[str] — objective labels (e.g. 'Environmental protection')
+          sectors         : list[str] — NACE sector labels (e.g. 'C.24.1 - Manufacture of ...')
+          member_state    : str   — country label (e.g. 'Germany')
+          aid_instruments : list[str] — instrument labels (e.g. 'Direct grant')
+
+        Returns empty dict if case not found.
+        """
+        import json as _json
+
+        norm = normalise_sa(sa_code)
+        v = self._data.get(norm)
+        if v is None:
+            return {}
+        meta = v.get('metadata', {})
+
+        # Title
+        titles = meta.get('caseTitle', [])
+        orig_titles = meta.get('caseOriginalTitle', [])
+
+        # Objectives — JSON-encoded: ["{\"items\":[{\"label\":\"...\"}]}"]
+        obj_labels = []
+        for raw in meta.get('caseObjectives', []):
+            try:
+                parsed = _json.loads(raw) if isinstance(raw, str) else raw
+                for item in parsed.get('items', []) if isinstance(parsed, dict) else []:
+                    if 'label' in item:
+                        obj_labels.append(item['label'])
+            except (ValueError, TypeError, AttributeError):
+                pass
+
+        # NACE sectors — JSON-encoded: ["{\"code\":\"...\",\"label\":\"...\"}"]
+        sec_labels = []
+        for raw in meta.get('caseSectors', []):
+            try:
+                parsed = _json.loads(raw) if isinstance(raw, str) else raw
+                if isinstance(parsed, dict) and 'label' in parsed:
+                    sec_labels.append(parsed['label'])
+            except (ValueError, TypeError):
+                pass
+
+        # Member state
+        ms_label = ''
+        for raw in meta.get('caseMemberState', []):
+            try:
+                parsed = _json.loads(raw) if isinstance(raw, str) else raw
+                if isinstance(parsed, dict):
+                    ms_label = parsed.get('label', '')
+            except (ValueError, TypeError):
+                pass
+
+        # Aid instruments
+        instr_labels = []
+        for raw in meta.get('caseAidInstruments', []):
+            try:
+                parsed = _json.loads(raw) if isinstance(raw, str) else raw
+                if isinstance(parsed, dict):
+                    for item in parsed.get('items', []) if 'items' in parsed else [parsed]:
+                        if 'label' in item:
+                            instr_labels.append(item['label'])
+            except (ValueError, TypeError, AttributeError):
+                pass
+
+        return {
+            'title': titles[0] if titles else '',
+            'original_title': orig_titles[0] if orig_titles else '',
+            'objectives': obj_labels,
+            'sectors': sec_labels,
+            'member_state': ms_label,
+            'aid_instruments': instr_labels,
+        }
+
     def get_linked_cases(self, sa_code: str) -> List[str]:
         """Return list of SA codes linked to this case (e.g. scheme → individual app)."""
         norm = normalise_sa(sa_code)
