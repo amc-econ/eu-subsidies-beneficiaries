@@ -2,7 +2,7 @@
 """Match a company list against the EU subsidies dataset.
 
 Usage:
-    python match_companies.py --company-list my_companies.csv
+    python src/match_companies.py --company-list my_companies.csv
 
 The company list is a CSV with a 'company_name' column and an optional
 'country' column (ISO 2-letter). Results land in data/processed/match_output/.
@@ -21,7 +21,8 @@ from pathlib import Path
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
 log = logging.getLogger('match_companies')
 
-REPO_ROOT = Path(__file__).resolve().parent
+REPO_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO_ROOT))
 RELEASE = 'https://github.com/amc-econ/eu-subsidies-beneficiaries/releases/download/v2.0'
 
 # downloaded on first use: (local path, release asset, min size in bytes)

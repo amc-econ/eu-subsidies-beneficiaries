@@ -7,8 +7,8 @@ beneficiary names and grant-equivalent amounts.
 ## Use
 
 ```
-pip install -r requirements.txt
-python match_companies.py --company-list my_companies.csv
+pip install pandas numpy pyarrow rapidfuzz
+python src/match_companies.py --company-list my_companies.csv
 ```
 
 Replace `my_companies.csv` with your own list: a `company_name` column,
