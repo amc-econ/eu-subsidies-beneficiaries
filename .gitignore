@@ -1,10 +1,19 @@
 # downloaded on first run
-data/processed/
+data/
 case-data-SA.json
 
-# local working files
-data/raw/
-data/cache/
+# local working files (never part of the public repo)
 _attic_*/
+diagram_workshop/
+repo_audit/
+research/
+scripts/
+examples/
+tools/
 __pycache__/
 *.pyc
+*.pdf
+*.xlsx
+*.tex
+*_tmp.txt
+my_companies_crm.csv

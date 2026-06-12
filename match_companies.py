@@ -24,21 +24,27 @@ log = logging.getLogger('match_companies')
 REPO_ROOT = Path(__file__).resolve().parent
 RELEASE = 'https://github.com/amc-econ/eu-subsidies-beneficiaries/releases/download/v2.0'
 
-# downloaded on first use: (local path, release asset, min size in MB)
+# downloaded on first use: (local path, release asset, min size in bytes)
 ASSETS = {
     'master': (REPO_ROOT / 'data' / 'processed' / 'master_dataset.parquet',
-               'master_dataset.parquet', 1000),
+               'master_dataset.parquet', 1_000_000_000),
     'cordis': (REPO_ROOT / 'data' / 'reference' / 'cordis_participants.csv',
-               'cordis_participants.csv', 10),
+               'cordis_participants.csv', 10_000_000),
     'eutl': (REPO_ROOT / 'data' / 'reference' / 'eutl_2024_202410.zip',
-             'eutl_2024_202410.zip', 30),
-    'sa_cases': (REPO_ROOT / 'case-data-SA.json', 'case-data-SA.json', 300),
+             'eutl_2024_202410.zip', 30_000_000),
+    'sa_cases': (REPO_ROOT / 'case-data-SA.json', 'case-data-SA.json',
+                 300_000_000),
+    'ipcei_overview': (REPO_ROOT / 'data' / 'reference' / 'ipcei_overview.csv',
+                       'ipcei_overview.csv', 300),
+    'ipcei_participants': (REPO_ROOT / 'data' / 'reference' /
+                           'ipcei_participants.csv',
+                           'ipcei_participants.csv', 1_000),
 }
 
 
 def _ensure(key: str) -> bool:
-    path, asset, min_mb = ASSETS[key]
-    if path.exists() and path.stat().st_size > min_mb * 1_000_000:
+    path, asset, min_bytes = ASSETS[key]
+    if path.exists() and path.stat().st_size > min_bytes:
         return True
     path.parent.mkdir(parents=True, exist_ok=True)
     url = f'{RELEASE}/{asset}'
@@ -122,6 +128,8 @@ def run(company_list: str, aliases: str | None, output_dir: str | None,
         except Exception as e:
             log.warning(f'ETS enrichment skipped: {e}')
 
+    _ensure('ipcei_overview')
+    _ensure('ipcei_participants')
     try:
         from src.enrichment.ipcei_reference import run_ipcei_enrichment
         run_ipcei_enrichment(
