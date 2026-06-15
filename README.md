@@ -4,8 +4,8 @@ A unified beneficiary-level dataset of public subsidies in the European
 Union: state aid, EU funds, and development bank lending, with resolved
 beneficiary names and grant-equivalent amounts.
 
-An overview deck — what the dataset is, how it is built, and what it has been
-used for — is in [presentation.pdf](presentation.pdf).
+For more detail — what the dataset is, how it is built, and what it has been
+used for — see the overview deck, [presentation.pdf](presentation.pdf).
 
 ## What's inside
 
