@@ -13,6 +13,7 @@ tools/
 __pycache__/
 *.pyc
 *.pdf
+!presentation.pdf
 *.xlsx
 *.tex
 *_tmp.txt
