@@ -24,6 +24,7 @@ log = logging.getLogger('match_companies')
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 RELEASE = 'https://github.com/amc-econ/eu-subsidies-beneficiaries/releases/download/v2.0'
+MATCH_OUTPUT_DIR = REPO_ROOT / 'data' / 'processed' / 'match_output'
 
 # downloaded on first use: (local path, release asset, min size in bytes)
 ASSETS = {
@@ -64,6 +65,28 @@ def _ensure(key: str) -> bool:
         return False
 
 
+def _print_summary(out: Path) -> None:
+    """Print a tidy, plain-words summary of what the run produced."""
+    chart_cmd = ('python make_charts.py' if out == MATCH_OUTPUT_DIR
+                 else f'python make_charts.py "{out}"')
+    print()
+    print('=' * 60)
+    print(f'Done. Results in {out}')
+    print()
+    print('  consolidated_matches.csv   the full dataset - one row per')
+    print('                             beneficiary-support relation')
+    print('  T1..T8_*.csv               ready-made breakdowns (by source,')
+    print('                             country, instrument, year, top')
+    print('                             beneficiaries, pre/post-2020)')
+    print('  concentration_metrics.json HHI / Gini / top-5% share')
+    print()
+    print('Charts are not generated automatically. To make a few quick ones:')
+    print('  pip install matplotlib')
+    print(f'  {chart_cmd}')
+    print('(or open any T*.csv in Excel, or chart it in pandas)')
+    print('=' * 60)
+
+
 def run(company_list: str, aliases: str | None, output_dir: str | None,
         config_json: str | None, pdf_enrichment: bool, use_llm: bool) -> None:
     from src.matching.generic_matcher import MatchConfig, run_matching
@@ -74,8 +97,7 @@ def run(company_list: str, aliases: str | None, output_dir: str | None,
 
     company_list_path = Path(company_list).resolve()
     aliases_path = Path(aliases).resolve() if aliases else None
-    out = (Path(output_dir).resolve() if output_dir
-           else REPO_ROOT / 'data' / 'processed' / 'match_output')
+    out = Path(output_dir).resolve() if output_dir else MATCH_OUTPUT_DIR
     out.mkdir(parents=True, exist_ok=True)
 
     config_data = {}
@@ -185,15 +207,7 @@ def run(company_list: str, aliases: str | None, output_dir: str | None,
         use_llm=use_llm,
     )
 
-    log.info('--- Step 4: Summary charts ---')
-    try:
-        from src.visualisations.summary_charts import generate_summary_charts
-        generate_summary_charts(out / 'consolidated_matches.csv', out / 'charts',
-                                prefix=config.output_prefix)
-    except Exception as e:
-        log.warning(f'Chart generation skipped: {e}')
-
-    log.info('Done — results in %s', out)
+    _print_summary(out)
 
 
 def main():
