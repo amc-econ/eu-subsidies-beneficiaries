@@ -32,13 +32,37 @@ several decades and is densest for recent years.
 ## Use
 
 ```
-pip install pandas numpy pyarrow rapidfuzz
+pip install -r requirements.txt
 python src/match_companies.py --company-list my_companies.csv
 ```
 
 Replace `my_companies.csv` with your own list: a `company_name` column,
 optionally a `country` column. The dataset (~1.7 GB) downloads on first
 run; results land in `data/processed/match_output/`.
+
+## Columns
+
+Each row is one beneficiary–support relation. The columns you'll use:
+
+| Column | Meaning |
+|---|---|
+| `match_reference_name` | the company/group from your list this row is attributed to |
+| `beneficiary_name` | recipient name as it appears in the source register |
+| `amount_eur` | support at face value, EUR |
+| `amount_gge` | support as grant equivalent, EUR — comparable across instruments |
+| `financial_instrument_class` | Grant, Loan, Guarantee, Equity, Tax advantage, Other |
+| `year` | year of the award |
+| `country` | granting country (ISO-2) |
+| `source` | register of origin: TAM, KOHESIO, FTS, EIB, EBRD, CINEA, RRF, IPCEI, ESIF |
+| `fund` | EU fund behind it: ERDF, ESF, Cohesion Fund, RRF |
+| `fiscal_source_type` | EU or national financing |
+| `parent_group` | corporate group the entity rolls up to |
+| `dc_preferred` | the canonical row — sum `amount_eur` where this is true |
+
+Totals run over `dc_preferred` rows. The dataset keeps cross-source duplicates
+(state aid also recorded as an EU fund, say) but marks all but one
+`dc_preferred = False`; the `T1`–`T8` tables and `concentration_metrics.json`
+already apply this.
 
 Developed at Bruegel by Antoine Mathieu Collin and Benjamin Bjerkan-Wade.
 MIT license.

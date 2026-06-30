@@ -1,0 +1,11 @@
+pandas
+numpy
+pyarrow
+rapidfuzz
+
+# PDF co-financing enrichment
+pdfplumber
+pymupdf4llm
+requests
+
+# charts (optional): matplotlib

@@ -65,26 +65,84 @@ def _ensure(key: str) -> bool:
         return False
 
 
+def _eur(x) -> str:
+    """Compact euro label for the summary line."""
+    if x is None:
+        return 'n/a'
+    a = abs(x)
+    if a >= 1e9:
+        return f'EUR {x / 1e9:.1f}B'
+    if a >= 1e6:
+        return f'EUR {x / 1e6:.0f}M'
+    if a >= 1e3:
+        return f'EUR {x / 1e3:.0f}K'
+    return f'EUR {x:.0f}'
+
+
+def _validate_company_list(path: Path) -> None:
+    """Fail fast (before the ~1.7 GB download) if the list is unusable."""
+    if not path.exists():
+        log.error(f'Company list not found: {path}')
+        sys.exit(1)
+    import csv
+    try:
+        with open(path, newline='', encoding='utf-8-sig') as f:
+            header = next(csv.reader(f), [])
+    except Exception as e:
+        log.error(f'Could not read company list {path}: {e}')
+        sys.exit(1)
+    cols = [h.strip() for h in header]
+    if 'company_name' not in cols:
+        log.error("Company list needs a 'company_name' column "
+                  f"(optional 'country'). Found: {cols or 'no columns'}")
+        sys.exit(1)
+
+
+def _pdf_libs_available() -> bool:
+    """True if the PDF text backend needed for co-financing de-dup is installed."""
+    import importlib.util
+    return importlib.util.find_spec('pdfplumber') is not None
+
+
 def _print_summary(out: Path) -> None:
     """Print a tidy, plain-words summary of what the run produced."""
     chart_cmd = ('python make_charts.py' if out == MATCH_OUTPUT_DIR
                  else f'python make_charts.py "{out}"')
+    headline = None
+    cm = out / 'concentration_metrics.json'
+    if cm.exists():
+        try:
+            headline = json.loads(cm.read_text(encoding='utf-8')).get('headline')
+        except Exception:
+            headline = None
+
     print()
-    print('=' * 60)
+    print('=' * 64)
     print(f'Done. Results in {out}')
+    if headline:
+        span = ''
+        if headline.get('year_min') and headline.get('year_max'):
+            span = f", {headline['year_min']}-{headline['year_max']}"
+        print()
+        print(f'  Total support{span}')
+        print(f"    {_eur(headline.get('total_face_eur'))} face value"
+              f"   |   {_eur(headline.get('total_gge_eur'))} grant-equivalent")
+        print(f"    {headline.get('n_relations', 0):,} relations"
+              f"   |   {headline.get('n_beneficiaries', 0):,} beneficiaries")
+        if headline.get('top_beneficiary'):
+            print(f"    largest: {headline['top_beneficiary']} "
+                  f"({_eur(headline.get('top_beneficiary_eur'))})")
     print()
-    print('  consolidated_matches.csv   the full dataset - one row per')
-    print('                             beneficiary-support relation')
-    print('  T1..T8_*.csv               ready-made breakdowns (by source,')
-    print('                             country, instrument, year, top')
-    print('                             beneficiaries, pre/post-2020)')
+    print('Output files:')
+    print('  consolidated_matches.csv   the full matched dataset')
+    print('  T1..T8_*.csv               breakdowns by source, country,')
+    print('                             instrument, year, top beneficiaries')
     print('  concentration_metrics.json HHI / Gini / top-5% share')
     print()
-    print('Charts are not generated automatically. To make a few quick ones:')
+    print('Charts are optional and not generated automatically:')
     print('  pip install matplotlib')
     print(f'  {chart_cmd}')
-    print('(or open any T*.csv in Excel, or chart it in pandas)')
-    print('=' * 60)
+    print('=' * 64)
 
 
 def run(company_list: str, aliases: str | None, output_dir: str | None,
@@ -92,10 +150,17 @@ def run(company_list: str, aliases: str | None, output_dir: str | None,
     from src.matching.generic_matcher import MatchConfig, run_matching
     from src.paths import master_dataset_path, ENRICHMENT_DIR
 
+    company_list_path = Path(company_list).resolve()
+    _validate_company_list(company_list_path)   # fail fast before any download
+
+    if pdf_enrichment and not _pdf_libs_available():
+        log.warning('PDF co-financing enrichment requires pdfplumber '
+                    '(pip install -r requirements.txt); skipping.')
+        pdf_enrichment = False
+
     if not _ensure('master'):
         sys.exit(1)
 
-    company_list_path = Path(company_list).resolve()
     aliases_path = Path(aliases).resolve() if aliases else None
     out = Path(output_dir).resolve() if output_dir else MATCH_OUTPUT_DIR
     out.mkdir(parents=True, exist_ok=True)

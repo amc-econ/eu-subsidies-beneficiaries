@@ -648,6 +648,32 @@ def build_concentration_metrics(df, col):
     }
 
 
+def _build_headline(df, ref_col):
+    """Headline figures for the run summary (df is the dc_preferred subset)."""
+    face = float(df['amount_eur'].sum()) if 'amount_eur' in df.columns else 0.0
+    gge = float(df['amount_gge'].sum()) if 'amount_gge' in df.columns else None
+    n_ben = int(df[ref_col].nunique()) if ref_col in df.columns else 0
+    top_name, top_eur = '', 0.0
+    if n_ben and 'amount_eur' in df.columns:
+        s = df.groupby(ref_col)['amount_eur'].sum().sort_values(ascending=False)
+        top_name, top_eur = str(s.index[0]), float(s.iloc[0])
+    year_min = year_max = None
+    if 'year' in df.columns:
+        yr = pd.to_numeric(df['year'], errors='coerce').dropna()
+        if len(yr):
+            year_min, year_max = int(yr.min()), int(yr.max())
+    return {
+        'total_face_eur': face,
+        'total_gge_eur': gge,
+        'n_relations': int(len(df)),
+        'n_beneficiaries': n_ben,
+        'top_beneficiary': top_name,
+        'top_beneficiary_eur': top_eur,
+        'year_min': year_min,
+        'year_max': year_max,
+    }
+
+
 # ============================================================================
 # PHASE 2b: CROSS-SOURCE DEDUPLICATION HELPERS
 # ============================================================================
@@ -1371,7 +1397,7 @@ def consolidate(
             n_entities = combined[ref_col].nunique()
             log.info(f"  {n_entities} entities → {n_groups} groups")
 
-            group_summary = combined.groupby('parent_group').agg(
+            group_summary = combined[combined['dc_preferred']].groupby('parent_group').agg(
                 n_entities=(ref_col, 'nunique'),
                 n_rows=('amount_eur', 'count'),
                 total_eur=('amount_eur', 'sum'),
@@ -1414,8 +1440,10 @@ def consolidate(
     # ------------------------------------------------------------------
     # Phase 6: Summary tables
     # ------------------------------------------------------------------
+    preferred = (combined[combined['dc_preferred']].copy()
+                 if 'dc_preferred' in combined.columns else combined)
     log.info("\nPhase 6: Building summary tables...")
-    tables = build_summary_tables(combined, group_summary=group_summary, prefix=prefix)
+    tables = build_summary_tables(preferred, group_summary=group_summary, prefix=prefix)
 
     for name, tbl in tables.items():
         if isinstance(tbl, pd.DataFrame):
@@ -1427,9 +1455,10 @@ def consolidate(
     # ------------------------------------------------------------------
     log.info("\nPhase 7: Concentration metrics...")
     metrics = {}
-    metrics['entity_level'] = build_concentration_metrics(combined, ref_col)
-    if group_summary is not None and 'parent_group' in combined.columns:
-        metrics['group_level'] = build_concentration_metrics(combined, 'parent_group')
+    metrics['entity_level'] = build_concentration_metrics(preferred, ref_col)
+    if group_summary is not None and 'parent_group' in preferred.columns:
+        metrics['group_level'] = build_concentration_metrics(preferred, 'parent_group')
+    metrics['headline'] = _build_headline(preferred, ref_col)
 
     log.info(f"  Entity: HHI={metrics['entity_level']['hhi']}, "
              f"Top5={metrics['entity_level']['top5_pct']}%, "
